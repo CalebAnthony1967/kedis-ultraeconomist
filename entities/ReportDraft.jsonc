@@ -1,0 +1,52 @@
+{
+  "name": "ReportDraft",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "title": "Report Title"
+    },
+    "sector": {
+      "type": "string",
+      "title": "Sector"
+    },
+    "content": {
+      "type": "string",
+      "title": "Content"
+    },
+    "status": {
+      "type": "string",
+      "title": "Status",
+      "enum": [
+        "draft",
+        "review",
+        "approved",
+        "routed"
+      ],
+      "default": "draft"
+    },
+    "citations": {
+      "type": "string",
+      "title": "SPI Citations (JSON)"
+    },
+    "date_range_start": {
+      "type": "string",
+      "format": "date",
+      "title": "Date Range Start"
+    },
+    "date_range_end": {
+      "type": "string",
+      "format": "date",
+      "title": "Date Range End"
+    },
+    "routed_to": {
+      "type": "string",
+      "title": "Routed To"
+    }
+  },
+  "required": [
+    "title",
+    "sector",
+    "status"
+  ]
+}

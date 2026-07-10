@@ -1,0 +1,68 @@
+{
+  "name": "CitizenFeedback",
+  "type": "object",
+  "properties": {
+    "ward_code": {
+      "type": "string",
+      "title": "Ward Code"
+    },
+    "ward_name": {
+      "type": "string",
+      "title": "Ward Name"
+    },
+    "county": {
+      "type": "string",
+      "title": "County"
+    },
+    "project_name": {
+      "type": "string",
+      "title": "Project Name"
+    },
+    "status_report": {
+      "type": "string",
+      "title": "Status Report"
+    },
+    "project_status": {
+      "type": "string",
+      "title": "Project Status",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "completed",
+        "stalled",
+        "abandoned"
+      ],
+      "default": "in_progress"
+    },
+    "submitter_type": {
+      "type": "string",
+      "title": "Submitter Type",
+      "enum": [
+        "citizen",
+        "ward_planner",
+        "researcher"
+      ],
+      "default": "citizen"
+    },
+    "is_anonymous": {
+      "type": "boolean",
+      "title": "Anonymous",
+      "default": true
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "enum": [
+        "en",
+        "sw"
+      ],
+      "default": "en"
+    }
+  },
+  "required": [
+    "ward_name",
+    "county",
+    "project_name",
+    "status_report"
+  ]
+}

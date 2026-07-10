@@ -1,0 +1,68 @@
+{
+  "name": "DataIngestionJob",
+  "type": "object",
+  "properties": {
+    "file_name": {
+      "type": "string",
+      "title": "File Name"
+    },
+    "file_type": {
+      "type": "string",
+      "title": "File Type",
+      "enum": [
+        "XLSX",
+        "CSV",
+        "JSON",
+        "SQL"
+      ]
+    },
+    "source_mcda": {
+      "type": "string",
+      "title": "Source MCDA"
+    },
+    "status": {
+      "type": "string",
+      "title": "Status",
+      "enum": [
+        "pending",
+        "validating",
+        "transforming",
+        "ingested",
+        "failed",
+        "anomaly"
+      ],
+      "default": "pending"
+    },
+    "records_ingested": {
+      "type": "integer",
+      "title": "Records Ingested"
+    },
+    "validation_errors": {
+      "type": "string",
+      "title": "Validation Errors"
+    },
+    "sha256_hash": {
+      "type": "string",
+      "title": "SHA-256 Hash"
+    },
+    "spi_assigned": {
+      "type": "boolean",
+      "title": "SPI Assigned",
+      "default": false
+    },
+    "framework_name": {
+      "type": "string",
+      "title": "Framework Name"
+    },
+    "temporal_year": {
+      "type": "integer",
+      "title": "Temporal Year"
+    }
+  },
+  "required": [
+    "file_name",
+    "file_type",
+    "source_mcda",
+    "status"
+  ]
+}

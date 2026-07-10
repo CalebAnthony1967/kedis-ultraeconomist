@@ -1,0 +1,50 @@
+{
+  "name": "PolicyScenario",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "Scenario Name"
+    },
+    "sector": {
+      "type": "string",
+      "title": "Sector"
+    },
+    "levers": {
+      "type": "string",
+      "title": "Policy Levers (JSON)"
+    },
+    "projected_values": {
+      "type": "string",
+      "title": "Projected Values (JSON)"
+    },
+    "baseline_value": {
+      "type": "number",
+      "title": "Baseline Value"
+    },
+    "projected_value": {
+      "type": "number",
+      "title": "Projected Value"
+    },
+    "description": {
+      "type": "string",
+      "title": "Description"
+    },
+    "status": {
+      "type": "string",
+      "title": "Status",
+      "enum": [
+        "draft",
+        "saved",
+        "approved",
+        "archived"
+      ],
+      "default": "draft"
+    }
+  },
+  "required": [
+    "name",
+    "sector",
+    "status"
+  ]
+}

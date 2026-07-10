@@ -1,0 +1,60 @@
+{
+  "name": "AuditLog",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "title": "Action",
+      "enum": [
+        "upload",
+        "view",
+        "edit",
+        "delete",
+        "export",
+        "login",
+        "logout",
+        "factory_reset",
+        "connector_pause",
+        "connector_resume"
+      ]
+    },
+    "user_email": {
+      "type": "string",
+      "title": "User Email"
+    },
+    "user_role": {
+      "type": "string",
+      "title": "User Role",
+      "enum": [
+        "admin",
+        "staff",
+        "public"
+      ]
+    },
+    "target_entity": {
+      "type": "string",
+      "title": "Target Entity"
+    },
+    "target_id": {
+      "type": "string",
+      "title": "Target ID"
+    },
+    "details": {
+      "type": "string",
+      "title": "Details"
+    },
+    "ip_address": {
+      "type": "string",
+      "title": "IP Address"
+    },
+    "sha256_hash": {
+      "type": "string",
+      "title": "SHA-256 Hash"
+    }
+  },
+  "required": [
+    "action",
+    "user_email",
+    "user_role"
+  ]
+}

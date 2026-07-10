@@ -1,0 +1,56 @@
+{
+  "name": "SDGTarget",
+  "type": "object",
+  "properties": {
+    "goal_number": {
+      "type": "integer",
+      "title": "SDG Goal Number",
+      "minimum": 1,
+      "maximum": 17
+    },
+    "goal_name": {
+      "type": "string",
+      "title": "Goal Name"
+    },
+    "target_description": {
+      "type": "string",
+      "title": "Target Description"
+    },
+    "current_value": {
+      "type": "number",
+      "title": "Current Value"
+    },
+    "target_value": {
+      "type": "number",
+      "title": "Target Value"
+    },
+    "baseline_value": {
+      "type": "number",
+      "title": "Baseline Value"
+    },
+    "progress_pct": {
+      "type": "number",
+      "title": "Progress (%)"
+    },
+    "sector": {
+      "type": "string",
+      "title": "Sector"
+    },
+    "unit": {
+      "type": "string",
+      "title": "Unit"
+    },
+    "year_target": {
+      "type": "integer",
+      "title": "Target Year"
+    }
+  },
+  "required": [
+    "goal_number",
+    "goal_name",
+    "target_description",
+    "current_value",
+    "target_value",
+    "progress_pct"
+  ]
+}

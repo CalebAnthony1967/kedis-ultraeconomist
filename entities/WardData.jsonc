@@ -1,0 +1,64 @@
+{
+  "name": "WardData",
+  "type": "object",
+  "properties": {
+    "ward_code": {
+      "type": "string",
+      "title": "Ward Code"
+    },
+    "ward_name": {
+      "type": "string",
+      "title": "Ward Name"
+    },
+    "county": {
+      "type": "string",
+      "title": "County"
+    },
+    "constituency": {
+      "type": "string",
+      "title": "Constituency"
+    },
+    "poverty_rate": {
+      "type": "number",
+      "title": "Poverty Rate (%)"
+    },
+    "gva": {
+      "type": "number",
+      "title": "Gross Value Added (KES M)"
+    },
+    "evi": {
+      "type": "number",
+      "title": "Enhanced Vegetation Index"
+    },
+    "mean_temperature": {
+      "type": "number",
+      "title": "Mean Temperature (\u00b0C)"
+    },
+    "population": {
+      "type": "integer",
+      "title": "Population"
+    },
+    "confidence_interval": {
+      "type": "number",
+      "title": "Confidence Interval (\u00b1)"
+    },
+    "sdg_score": {
+      "type": "number",
+      "title": "SDG Composite Score"
+    },
+    "carbon_storage": {
+      "type": "number",
+      "title": "Carbon Storage (tC/ha)"
+    },
+    "biodiversity_index": {
+      "type": "number",
+      "title": "Biodiversity Index"
+    }
+  },
+  "required": [
+    "ward_code",
+    "ward_name",
+    "county",
+    "constituency"
+  ]
+}

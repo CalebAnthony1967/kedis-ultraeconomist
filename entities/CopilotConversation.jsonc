@@ -1,0 +1,55 @@
+{
+  "name": "CopilotConversation",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "title": "Conversation Title"
+    },
+    "messages": {
+      "type": "array",
+      "title": "Messages",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "spi_citations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "probability_score": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "enum": [
+        "en",
+        "sw"
+      ],
+      "default": "en"
+    },
+    "sector": {
+      "type": "string",
+      "title": "Sector Focus"
+    }
+  },
+  "required": [
+    "title",
+    "language"
+  ]
+}

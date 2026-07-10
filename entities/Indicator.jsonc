@@ -1,0 +1,80 @@
+{
+  "name": "Indicator",
+  "type": "object",
+  "properties": {
+    "indicator_id": {
+      "type": "string",
+      "title": "Indicator ID"
+    },
+    "name": {
+      "type": "string",
+      "title": "Indicator Name"
+    },
+    "pillar": {
+      "type": "string",
+      "title": "Pillar",
+      "enum": [
+        "Economic",
+        "Social",
+        "Governance",
+        "Environmental",
+        "Political"
+      ]
+    },
+    "sector": {
+      "type": "string",
+      "title": "Sector"
+    },
+    "sub_sector": {
+      "type": "string",
+      "title": "Sub-Sector"
+    },
+    "department": {
+      "type": "string",
+      "title": "Department"
+    },
+    "location_code": {
+      "type": "string",
+      "title": "Location Code"
+    },
+    "year": {
+      "type": "integer",
+      "title": "Year"
+    },
+    "value": {
+      "type": "number",
+      "title": "Value"
+    },
+    "unit": {
+      "type": "string",
+      "title": "Unit"
+    },
+    "source_mcda": {
+      "type": "string",
+      "title": "Source MCDA"
+    },
+    "link_to_sdg": {
+      "type": "string",
+      "title": "SDG Link"
+    },
+    "spi": {
+      "type": "string",
+      "title": "Sovereign Persistent Identifier"
+    },
+    "is_verified": {
+      "type": "boolean",
+      "title": "Verified",
+      "default": false
+    }
+  },
+  "required": [
+    "indicator_id",
+    "name",
+    "pillar",
+    "sector",
+    "year",
+    "value",
+    "unit",
+    "source_mcda"
+  ]
+}
