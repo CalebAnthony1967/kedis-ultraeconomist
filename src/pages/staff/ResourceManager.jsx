@@ -7,13 +7,13 @@ import {
 } from 'lucide-react';
 
 const STAFF = [
-  { name: 'Dr. Wanjiru Kamau', role: 'Macroeconomist', dept: 'Economic Management', access: 'Staff', training: 92 },
+  { name: 'Dr. James Gachanja', role: 'Senior Policy Analyst', dept: 'IESD', access: 'Super Admin', training: 100 },
   { name: 'Eng. Otieno Samuel', role: 'Infrastructure Specialist', dept: 'Integrated Development', access: 'Staff', training: 78 },
   { name: 'Dr. Achieng Pamela', role: 'Social Researcher', dept: 'Economic Management', access: 'Staff', training: 85 },
   { name: 'Mr. Kamau Thomas', role: 'Trade Analyst', dept: 'Integrated Development', access: 'Staff', training: 64 },
   { name: 'Ms. Fatuma Ali', role: 'Legal Officer', dept: 'Technical Command', access: 'Admin', training: 88 },
   { name: 'Mr. Brian Kiprop', role: 'ICT Officer', dept: 'Technical Command', access: 'Admin', training: 95 },
-  { name: 'Dr. Grace Muthoni', role: 'Executive Director', dept: 'Governance', access: 'Super Admin', training: 100 },
+  { name: 'Dr. Eldah Onsomu', role: 'Executive Director', dept: 'Governance', access: 'Super Admin', training: 100 },
   { name: 'Mr. Daniel Mwale', role: 'Auditor', dept: 'Corporate Services', access: 'Staff', training: 72 },
 ];
 

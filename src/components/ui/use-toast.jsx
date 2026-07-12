@@ -1,8 +1,8 @@
-// Inspired by react-hot-toast library
+﻿// Inspired by react-hot-toast library
 import { useState, useEffect } from "react";
 
 const TOAST_LIMIT = 20;
-const TOAST_REMOVE_DELAY = 1000000;
+const DEFAULT_TOAST_DURATION = 5000;
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
@@ -20,7 +20,7 @@ function genId() {
 
 const toastTimeouts = new Map();
 
-const addToRemoveQueue = (toastId) => {
+const addToRemoveQueue = (toastId, duration) => {
   if (toastTimeouts.has(toastId)) {
     return;
   }
@@ -31,7 +31,7 @@ const addToRemoveQueue = (toastId) => {
       type: actionTypes.REMOVE_TOAST,
       toastId,
     });
-  }, TOAST_REMOVE_DELAY);
+  }, duration || DEFAULT_TOAST_DURATION);
 
   toastTimeouts.set(toastId, timeout);
 };
@@ -47,6 +47,7 @@ const _clearFromRemoveQueue = (toastId) => {
 export const reducer = (state, action) => {
   switch (action.type) {
     case actionTypes.ADD_TOAST:
+      addToRemoveQueue(action.toast.id, action.toast.duration);
       return {
         ...state,
         toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
@@ -66,10 +67,10 @@ export const reducer = (state, action) => {
       // ! Side effects ! - This could be extracted into a dismissToast() action,
       // but I'll keep it here for simplicity
       if (toastId) {
-        addToRemoveQueue(toastId);
+        addToRemoveQueue(toastId, 300);
       } else {
         state.toasts.forEach((toast) => {
-          addToRemoveQueue(toast.id);
+          addToRemoveQueue(toast.id, 300);
         });
       }
 
@@ -161,4 +162,4 @@ function useToast() {
   };
 }
 
-export { useToast, toast }; 
+export { useToast, toast };

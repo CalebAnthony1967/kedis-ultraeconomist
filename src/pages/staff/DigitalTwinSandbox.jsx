@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import { useLanguage } from '@/lib/i18n';
 import { base44 } from '@/api/base44Client';
 import {
@@ -38,6 +38,27 @@ const LEVERS = {
     { key: 'health_budget', label: 'Health Budget (% of GDP)', min: 3, max: 15, default: 5.2 },
     { key: 'facility_density', label: 'Facilities per 10k pop', min: 1, max: 10, default: 3 },
     { key: 'uhc_coverage', label: 'UHC Coverage (%)', min: 0, max: 100, default: 45 },
+  ],
+  // ---- NEW SECTORS ----
+  Manufacturing: [
+    { key: 'export_incentive', label: 'Export Incentive (% subsidy)', min: 0, max: 50, default: 15 },
+    { key: 'energy_cost', label: 'Energy Cost (KES/kWh)', min: 5, max: 30, default: 12 },
+    { key: 'industrial_zone', label: 'Industrial Zone Investment (KES B)', min: 0, max: 80, default: 20 },
+  ],
+  Tourism: [
+    { key: 'marketing_budget', label: 'Marketing Budget (KES B)', min: 0, max: 20, default: 5 },
+    { key: 'visa_policy', label: 'Visa Ease Index (1–10)', min: 1, max: 10, default: 6 },
+    { key: 'infrastructure_quality', label: 'Infrastructure Quality (1–10)', min: 1, max: 10, default: 7 },
+  ],
+  ICT: [
+    { key: 'broadband_coverage', label: 'Broadband Coverage (%)', min: 10, max: 100, default: 50 },
+    { key: 'digital_skills', label: 'Digital Skills Index (1–10)', min: 1, max: 10, default: 5 },
+    { key: 'innovation_grant', label: 'Innovation Grant (KES B)', min: 0, max: 30, default: 8 },
+  ],
+  Finance: [
+    { key: 'interest_rate', label: 'Lending Rate (%)', min: 2, max: 20, default: 10 },
+    { key: 'credit_access', label: 'Credit Access Index (1–10)', min: 1, max: 10, default: 4 },
+    { key: 'digital_payments', label: 'Digital Payments Adoption (%)', min: 0, max: 100, default: 40 },
   ],
 };
 
