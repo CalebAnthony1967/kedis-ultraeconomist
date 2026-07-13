@@ -1,4 +1,4 @@
-﻿import * as React from "react";
+import * as React from "react";
 import { cva } from "class-variance-authority";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,8 @@ const toastVariants = cva(
           "border-emerald-600 bg-emerald-600 text-white",
         warning:
           "border-amber-500 bg-amber-500 text-white",
+        info:
+          "border-blue-600 bg-blue-600 text-white",
       },
     },
     defaultVariants: {
