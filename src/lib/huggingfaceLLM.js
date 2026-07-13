@@ -34,7 +34,6 @@ const HF_URL = `https://api-inference.huggingface.co/models/${HF_MODEL}`;
 
 function detectLanguage(text) {
   if (!text || text.trim().length === 0) return 'en';
-  // Use word boundaries to avoid false positives
   const swWords = ['je', 'ni', 'ya', 'wa', 'na', 'kwa', 'kwenye', 'kutoka', 'pamoja', 'bila', 'baada', 'kabla', 'hata', 'kama', 'wakati', 'tangu', 'mpaka', 'ingawa', 'kwamba', 'hiyo', 'ile', 'hii', 'hizo', 'zile', 'wale', 'wao', 'yeye', 'mimi', 'sisi', 'nyinyi', 'wewe', 'wenu', 'yetu', 'yangu', 'zangu', 'wangu'];
   const words = text.split(/\s+/);
   const swCount = words.filter(w => swWords.some(sw => new RegExp(`\\b${sw}\\b`, 'i').test(w))).length;
@@ -66,11 +65,15 @@ function getConversationContext(messages, limit = 5) {
 // 2. QUERY UNDERSTANDING (LLM classification)
 // ============================================================
 
-async function classifyQuery(query, lang, context = []) {
-  // Build context string for classification
-  const contextStr = context.length > 0
-    ? `Previous conversation:\n${context.map(t => `${t.role}: ${t.content}`).join('\n')}`
-    : '';
+async function classifyQuery(query, lang, context = [], previousContext = null) {
+  // Build context string
+  let contextStr = '';
+  if (context.length > 0) {
+    contextStr = `Previous conversation:\n${context.map(t => `${t.role}: ${t.content}`).join('\n')}`;
+  }
+  if (previousContext) {
+    contextStr += `\nLast query context: intent=${previousContext.intent}, entities=${previousContext.entities?.join(', ') || 'none'}, geography=${previousContext.geography || 'national'}, time_range=${JSON.stringify(previousContext.time_range)}`;
+  }
 
   const prompt = lang === 'sw'
     ? `Tambua swali hili la uchumi na urudishe JSON pekee. Hakikisha hakuna mabano ya markdown.
@@ -108,11 +111,9 @@ Query: ${query}`;
   if (!raw) {
     return getDefaultClassification(query);
   }
-  // Remove markdown fences if present
   raw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
   try {
     const parsed = JSON.parse(raw);
-    // Ensure required fields
     return {
       intent: parsed.intent || 'fact',
       pillars: parsed.pillars || ['macroeconomic'],
@@ -153,7 +154,6 @@ async function searchIndicators({ query, pillars = [], geography, time_range, li
     .limit(limit);
 
   if (pillars && pillars.length > 0) {
-    // Map pillar strings to exact enum values (case-sensitive)
     const pillarEnum = pillars.map(p => p.charAt(0).toUpperCase() + p.slice(1));
     supabaseQuery = supabaseQuery.in('pillar', pillarEnum);
   }
@@ -167,7 +167,6 @@ async function searchIndicators({ query, pillars = [], geography, time_range, li
     supabaseQuery = supabaseQuery.lte('year', time_range.end);
   }
 
-  // Full‑text search using ILIKE on search_text
   const words = query.split(/\s+/).filter(w => w.length > 2);
   if (words.length > 0) {
     const conditions = words.map(w => `search_text.ilike.%${w}%`);
@@ -195,7 +194,6 @@ async function getIndicatorSeries(indicatorId, startYear, endYear) {
 }
 
 async function getInternationalData(indicator, country = 'Kenya', years = [2020, 2024]) {
-  // Placeholder: future IMF/World Bank API integration.
   console.log('International data requested but not yet implemented');
   return [];
 }
@@ -312,25 +310,20 @@ function computeProbabilityGeneralized(series, targetValue, targetYear) {
   return Math.min(100, Math.max(0, prob));
 }
 
-// Extract target value and year from query or classification
 function extractTargetInfo(query, classification) {
   let target = null, targetYear = null;
-  // Look for numbers like "10%" or "10 per cent" or "10 percent"
   const match = query.match(/(\d+\.?\d*)\s*%?\s*(?:per cent|percent|%)?/i);
   if (match) target = parseFloat(match[1]);
-  // Look for year like "2030"
   const yearMatch = query.match(/\b(20[2-9][0-9]|2030|2040|2050)\b/);
   if (yearMatch) targetYear = parseInt(yearMatch[1]);
-  // If not found, fallback to classification time_range end
   if (!targetYear && classification.time_range?.end) targetYear = classification.time_range.end;
-  if (!target) target = 10; // default
+  if (!target) target = 10;
   if (!targetYear) targetYear = 2030;
   return { target, targetYear };
 }
 
 function computeAnalytics(indicators, classification, query) {
   const results = {};
-  // Group by indicator id (the actual PK)
   const grouped = {};
   for (const ind of indicators) {
     const id = ind.id;
@@ -345,11 +338,9 @@ function computeAnalytics(indicators, classification, query) {
       volatility: computeVolatility(sorted),
     };
   }
-  // Probability: if forecast/report, compute for the primary entity
   let probability = null;
   if (classification.intent === 'forecast' || classification.intent === 'report') {
     const { target, targetYear } = extractTargetInfo(query, classification);
-    // Use the first entity that appears in the data, or fallback to GDP
     const primaryEntity = classification.entities?.[0] || 'gdp';
     const relevantIndicators = indicators.filter(ind =>
       (ind.name || '').toLowerCase().includes(primaryEntity.toLowerCase())
@@ -358,7 +349,6 @@ function computeAnalytics(indicators, classification, query) {
       const sorted = relevantIndicators.map(ind => ({ year: ind.year, value: parseFloat(String(ind.value).replace(/,/g, '')) })).sort((a, b) => a.year - b.year);
       probability = computeProbabilityGeneralized(sorted, target, targetYear);
     } else {
-      // If no specific entity found, use all GDP-like indicators
       const gdpIndicators = indicators.filter(ind => (ind.name || '').toLowerCase().includes('gdp'));
       if (gdpIndicators.length > 0) {
         const sorted = gdpIndicators.map(ind => ({ year: ind.year, value: parseFloat(String(ind.value).replace(/,/g, '')) })).sort((a, b) => a.year - b.year);
@@ -370,7 +360,58 @@ function computeAnalytics(indicators, classification, query) {
 }
 
 // ============================================================
-// 6. FORMAT‑AWARE ANSWER GENERATION
+// 6. CHART GENERATION (NEW)
+// ============================================================
+
+function detectChartRequest(query) {
+  const keywords = ['chart', 'graph', 'visualize', 'plot', 'show me', 'display', 'trend', 'compare', 'visualisation'];
+  return keywords.some(k => query.toLowerCase().includes(k));
+}
+
+function buildChartData(indicators, type = 'line') {
+  // Group by indicator name (use id as fallback)
+  const groups = {};
+  for (const ind of indicators) {
+    const key = ind.name || `Indicator ${ind.id || ''}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push({ year: ind.year, value: parseFloat(String(ind.value).replace(/,/g, '')) });
+  }
+
+  // For line / area charts: combine into array of { year, series1, series2, ... }
+  if (type === 'line' || type === 'area') {
+    const years = new Set();
+    for (const name in groups) {
+      for (const d of groups[name]) years.add(d.year);
+    }
+    const sortedYears = Array.from(years).sort();
+    const chartData = sortedYears.map(year => {
+      const row = { year };
+      for (const name in groups) {
+        const entry = groups[name].find(d => d.year === year);
+        row[name] = entry ? entry.value : null;
+      }
+      return row;
+    });
+    const series = Object.keys(groups);
+    return { type: type, data: chartData, xKey: 'year', series };
+  }
+
+  // For bar charts: compare latest values
+  if (type === 'bar') {
+    const latestData = [];
+    for (const name in groups) {
+      const sorted = groups[name].sort((a, b) => a.year - b.year);
+      const latest = sorted[sorted.length - 1];
+      if (latest) latestData.push({ name, value: latest.value });
+    }
+    return { type: 'bar', data: latestData, xKey: 'name', yKey: 'value' };
+  }
+
+  return null;
+}
+
+// ============================================================
+// 7. FORMAT‑AWARE ANSWER GENERATION
 // ============================================================
 
 function buildPrompt(intent, query, contextText, analytics, lang) {
@@ -436,7 +477,6 @@ function buildPrompt(intent, query, contextText, analytics, lang) {
         : `Question: ${query}\n\nData:\n${contextText}\n\nAnswer.`;
   }
 
-  // If analytics available, add them to prompt (only for trend/forecast/report)
   if (analytics && analytics.results && (intent === 'trend' || intent === 'forecast' || intent === 'report')) {
     const analyticsText = Object.entries(analytics.results).map(([id, a]) => {
       const cagr = a.cagr !== null ? a.cagr.toFixed(2) : 'N/A';
@@ -452,19 +492,16 @@ function buildPrompt(intent, query, contextText, analytics, lang) {
 }
 
 // ============================================================
-// 7. POST‑PROCESSING & FACT‑CHECK
+// 8. POST‑PROCESSING & FACT‑CHECK
 // ============================================================
 
 function factCheck(answer, retrievedData) {
   if (!answer) return answer;
-  // Extract all numbers with commas and decimals
   const numbers = answer.match(/\d+\.?\d*/g) || [];
-  // Build a set of all values from retrieved data (as strings)
   const valueSet = new Set();
   for (const row of retrievedData) {
     const val = String(row.value).replace(/,/g, '');
     valueSet.add(val);
-    // Also add the value with comma
     valueSet.add(row.value);
   }
   const bound = numbers.map(num => {
@@ -472,7 +509,6 @@ function factCheck(answer, retrievedData) {
     return { value: num, found };
   });
   const unbound = bound.filter(b => !b.found);
-  // Only warn if there are unbound numbers that are not clearly years or small counts
   const suspicious = unbound.filter(b => !/^\d{4}$/.test(b.value) && parseFloat(b.value) > 1);
   if (suspicious.length > 0 && suspicious.length <= 5) {
     answer += `\n\n**Note:** The following figures could not be verified against retrieved data: ${suspicious.map(b => b.value).join(', ')}. Please verify independently.`;
@@ -482,7 +518,6 @@ function factCheck(answer, retrievedData) {
 
 function ensureLanguage(answer, lang) {
   if (!answer) return answer;
-  // Use word boundaries
   const swWords = ['ni', 'ya', 'wa', 'na', 'kwa', 'kwenye', 'kutoka', 'pamoja', 'bila'];
   const hasSw = swWords.some(w => new RegExp(`\\b${w}\\b`, 'i').test(answer));
   if (lang === 'sw' && !hasSw) {
@@ -492,7 +527,7 @@ function ensureLanguage(answer, lang) {
 }
 
 // ============================================================
-// 8. STRUCTURED MEMORY PERSISTENCE
+// 9. STRUCTURED MEMORY PERSISTENCE
 // ============================================================
 
 export async function saveStructuredTurn(conversationId, turnData) {
@@ -545,17 +580,17 @@ export async function saveStructuredTurn(conversationId, turnData) {
 }
 
 // ============================================================
-// 9. MAIN runRAG ORCHESTRATOR (FULL WORKFLOW)
+// 10. MAIN runRAG ORCHESTRATOR (FULL WORKFLOW)
 // ============================================================
 
-export async function runRAG(query, filter, lang = 'en', messages = [], conversationId = null) {
+export async function runRAG(query, filter, lang = 'en', messages = [], conversationId = null, previousContext = null) {
   // ---------- STAGE 1: INTAKE ----------
   const detectedLang = detectLanguage(query) || lang;
   const normalizedQuery = normalizeQuery(query);
   const context = getConversationContext(messages);
 
   // ---------- STAGE 2: QUERY UNDERSTANDING ----------
-  const classification = await classifyQuery(normalizedQuery, detectedLang, context);
+  const classification = await classifyQuery(normalizedQuery, detectedLang, context, previousContext);
   classification.language = detectedLang;
 
   // ---------- STAGE 3: RETRIEVAL (multi‑query, parallel) ----------
@@ -569,7 +604,6 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
       limit: 10,
     })
   );
-  // Also broad search
   const broadPromise = searchIndicators({
     query: normalizedQuery,
     pillars: classification.pillars,
@@ -597,7 +631,6 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
   }
 
   // ---------- STAGE 5: ANALYTICS ----------
-  // For trend/forecast intents, fetch full series for primary indicator
   let analyticsData = topIndicators;
   if (classification.intent === 'trend' || classification.intent === 'forecast') {
     const primaryEntity = classification.entities?.[0];
@@ -616,7 +649,18 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
   }
   const analytics = computeAnalytics(analyticsData, classification, normalizedQuery);
 
-  // ---------- STAGE 6: BUILD PROMPT & GENERATE ----------
+  // ---------- STAGE 6: CHART GENERATION (NEW) ----------
+  let chart = null;
+  if (detectChartRequest(normalizedQuery) && topIndicators.length > 0) {
+    // Determine chart type from query
+    let chartType = 'line';
+    if (normalizedQuery.toLowerCase().includes('bar')) chartType = 'bar';
+    else if (normalizedQuery.toLowerCase().includes('area')) chartType = 'area';
+    else if (normalizedQuery.toLowerCase().includes('pie')) chartType = 'pie'; // fallback to line
+    chart = buildChartData(topIndicators, chartType);
+  }
+
+  // ---------- STAGE 7: BUILD PROMPT & GENERATE ----------
   const contextText = topIndicators.length > 0
     ? topIndicators.slice(0, 10).map(ind =>
         `- ${ind.name} (${ind.year}): ${ind.value} ${ind.unit} | ${ind.source_mcda} | SPI: ${ind.spi || 'N/A'}`
@@ -637,18 +681,17 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
     answer = generateStructuredAnswer(normalizedQuery, topIndicators, detectedLang);
   }
 
-  // ---------- STAGE 7: POST‑PROCESSING ----------
+  // ---------- STAGE 8: POST‑PROCESSING ----------
   answer = factCheck(answer, topIndicators);
   answer = ensureLanguage(answer, detectedLang);
   if (confidenceNote) {
     answer = confidenceNote + '\n\n' + answer;
   }
 
-  // ---------- STAGE 8: STRUCTURED MEMORY ----------
+  // ---------- STAGE 9: STRUCTURED MEMORY ----------
   const spiCitations = topIndicators.map(ind => ind.spi).filter(Boolean);
   const indicatorIds = topIndicators.map(ind => ind.id).filter(Boolean);
 
-  // Save structured turn if conversationId provided
   if (conversationId) {
     await saveStructuredTurn(conversationId, {
       query: normalizedQuery,
@@ -662,6 +705,7 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
 
   return {
     answer,
+    chart, // <-- NEW
     spi_citations: spiCitations.slice(0, 10),
     probability_score: analytics.probability || null,
     context_count: topIndicators.length,
@@ -682,7 +726,7 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
 }
 
 // ============================================================
-// 10. CONVERSATION MANAGEMENT (updated for structured context)
+// 11. CONVERSATION MANAGEMENT
 // ============================================================
 
 export async function saveConversation(conversationId, messages, title, language, sector) {
@@ -741,7 +785,7 @@ export async function routeToPS(message) {
 }
 
 // ============================================================
-// 11. HELPER: generateStructuredAnswer (fallback)
+// 12. HELPER: generateStructuredAnswer (fallback)
 // ============================================================
 
 function generateStructuredAnswer(query, indicators, lang) {
@@ -763,7 +807,6 @@ function generateStructuredAnswer(query, indicators, lang) {
 
   const spis = top.map(ind => ind.spi).filter(Boolean).slice(0, 5).join(', ');
 
-  // Use the old probability heuristic as fallback
   let prob = null;
   const gdp = indicators.filter(ind => (ind.name || '').toLowerCase().includes('gdp'));
   if (gdp.length > 0) {
@@ -790,7 +833,7 @@ function generateStructuredAnswer(query, indicators, lang) {
 }
 
 // ============================================================
-// 12. AI CALLERS (implementation)
+// 13. AI CALLERS
 // ============================================================
 
 async function callGroq(prompt, systemPrompt) {
