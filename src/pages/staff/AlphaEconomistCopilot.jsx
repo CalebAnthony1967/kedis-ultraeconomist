@@ -1,9 +1,9 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLanguage } from '@/lib/i18n';
 // Custom toast logic replaces the default component
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { supabase } from '@/lib/supabaseClient';
-import { runRAG, saveConversation, loadConversations } from '@/lib/huggingfaceLLM';
+import { runRAG, saveConversation, loadConversations, saveStructuredTurn } from '@/lib/huggingfaceLLM';
 import DatasetSelector from '@/components/staff/DatasetSelector';
 import CopilotMessage from '@/components/staff/CopilotMessage';
 import { Brain, Send, Sparkles, Mic, Loader2, MessageSquare, Plus, History, X } from 'lucide-react';
@@ -110,7 +110,7 @@ export default function AlphaEconomistCopilot() {
   }, [loadJobs, loadConversationsList]);
 
   // -------------------------------------------------------------------------
-  // Send message with RAG
+  // Send message with RAG (full workflow)
   // -------------------------------------------------------------------------
   const handleSend = async (query) => {
     const text = (query || input).trim();
@@ -123,8 +123,21 @@ export default function AlphaEconomistCopilot() {
     setLoading(true);
 
     try {
-      const result = await runRAG(text, selectedFilter, lang, messages);
+      // 1. Ensure we have a conversation ID before calling runRAG
+      let currentConversationId = conversationId;
+      if (!currentConversationId) {
+        // Create a new conversation with placeholder title
+        const title = text.substring(0, 60) + (text.length > 60 ? '...' : '');
+        const { id } = await saveConversation(null, [], title, lang, selectedFilter.label);
+        currentConversationId = id;
+        setConversationId(id);
+        loadConversationsList();
+      }
 
+      // 2. Call runRAG with the conversation ID so it auto-saves structured turns
+      const result = await runRAG(text, selectedFilter, lang, messages, currentConversationId);
+
+      // 3. Build assistant message with additional metadata
       const aiMsg = {
         role: 'assistant',
         content: result.answer || 'I could not process that query.',
@@ -132,32 +145,22 @@ export default function AlphaEconomistCopilot() {
         probability_score: result.probability_score,
         context_count: result.context_count || 0,
         retrieved_indicators: result.retrieved_indicators || [],
+        confidence: result.confidence,
+        missing_entities: result.missing_entities || [],
+        classification: result.classification,
+        analytics: result.analytics,
       };
       const updatedMessages = [...newMessages, aiMsg];
       setMessages(updatedMessages);
 
-      // Save conversation to Supabase
-      try {
-        const title = text.substring(0, 60) + (text.length > 60 ? '...' : '');
-        const saved = await saveConversation(
-          conversationId,
-          updatedMessages.map(m => ({
-            role: m.role,
-            content: m.content,
-            spi_citations: m.spi_citations,
-            probability_score: m.probability_score,
-          })),
-          title,
-          lang,
-          selectedFilter.label,
-        );
-        if (!conversationId) {
-          setConversationId(saved.id);
-          loadConversationsList();
-        }
-      } catch (saveErr) {
-        // Conversation save is non-critical
-        console.warn('Conversation save failed:', saveErr);
+      // 4. Show warning if confidence is low
+      if (result.confidence !== undefined && result.confidence < 0.5) {
+        toast({
+          title: 'Low data confidence',
+          description: `Some requested indicators are missing: ${result.missing_entities?.join(', ') || 'Unknown'}`,
+          variant: 'warning',
+          duration: 5000,
+        });
       }
 
       if (result.context_count === 0) {
@@ -167,6 +170,10 @@ export default function AlphaEconomistCopilot() {
           variant: 'warning',
         });
       }
+
+      // 5. Update conversation list to reflect new message
+      loadConversationsList();
+
     } catch (e) {
       const errMsg = {
         role: 'assistant',
@@ -367,6 +374,9 @@ export default function AlphaEconomistCopilot() {
                       <p className="text-xs font-medium text-foreground truncate">{conv.title}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         {conv.sector} · {new Date(conv.updated_at).toLocaleDateString()}
+                        {conv.structured_context && (
+                          <span className="ml-2 text-primary">· structured</span>
+                        )}
                       </p>
                     </button>
                   ))
@@ -408,7 +418,12 @@ export default function AlphaEconomistCopilot() {
                 ) : (
                   <div className="space-y-6">
                     {messages.map((msg, i) => (
-                      <CopilotMessage key={i} message={msg} onRouteToPS={handleRouteToPS} />
+                      <CopilotMessage
+                        key={i}
+                        message={msg}
+                        onRouteToPS={handleRouteToPS}
+                        showConfidence={msg.role === 'assistant'}
+                      />
                     ))}
                     {loading && (
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
