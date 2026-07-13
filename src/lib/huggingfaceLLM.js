@@ -66,7 +66,6 @@ function getConversationContext(messages, limit = 5) {
 // ============================================================
 
 async function classifyQuery(query, lang, context = [], previousContext = null) {
-  // Build context string
   let contextStr = '';
   if (context.length > 0) {
     contextStr = `Previous conversation:\n${context.map(t => `${t.role}: ${t.content}`).join('\n')}`;
@@ -144,22 +143,33 @@ function getDefaultClassification(query) {
 }
 
 // ============================================================
-// 3. MCP‑STYLE RETRIEVAL TOOLS
+// 3. MCP‑STYLE RETRIEVAL TOOLS (UPDATED to accept filter)
 // ============================================================
 
-async function searchIndicators({ query, pillars = [], geography, time_range, limit = 15 }) {
+async function searchIndicators({
+  query,
+  pillars = [],
+  geography,
+  time_range,
+  limit = 15,
+  source_mcda = null,      // <-- NEW
+  temporal_year = null,    // <-- NEW
+}) {
   let supabaseQuery = supabase
     .from('indicators')
     .select('*')
     .limit(limit);
 
+  // Apply pillar filter
   if (pillars && pillars.length > 0) {
     const pillarEnum = pillars.map(p => p.charAt(0).toUpperCase() + p.slice(1));
     supabaseQuery = supabaseQuery.in('pillar', pillarEnum);
   }
+  // Apply geography
   if (geography && geography !== 'national' && geography !== 'global') {
     supabaseQuery = supabaseQuery.ilike('location_code', `%${geography}%`);
   }
+  // Apply time range
   if (time_range && time_range.start) {
     supabaseQuery = supabaseQuery.gte('year', time_range.start);
   }
@@ -167,6 +177,15 @@ async function searchIndicators({ query, pillars = [], geography, time_range, li
     supabaseQuery = supabaseQuery.lte('year', time_range.end);
   }
 
+  // ----- NEW: Apply dataset filter -----
+  if (source_mcda) {
+    supabaseQuery = supabaseQuery.eq('source_mcda', source_mcda);
+  }
+  if (temporal_year) {
+    supabaseQuery = supabaseQuery.eq('year', temporal_year);
+  }
+
+  // Full‑text search using ILIKE on search_text
   const words = query.split(/\s+/).filter(w => w.length > 2);
   if (words.length > 0) {
     const conditions = words.map(w => `search_text.ilike.%${w}%`);
@@ -360,7 +379,7 @@ function computeAnalytics(indicators, classification, query) {
 }
 
 // ============================================================
-// 6. CHART GENERATION (NEW)
+// 6. CHART GENERATION
 // ============================================================
 
 function detectChartRequest(query) {
@@ -369,7 +388,6 @@ function detectChartRequest(query) {
 }
 
 function buildChartData(indicators, type = 'line') {
-  // Group by indicator name (use id as fallback)
   const groups = {};
   for (const ind of indicators) {
     const key = ind.name || `Indicator ${ind.id || ''}`;
@@ -377,7 +395,6 @@ function buildChartData(indicators, type = 'line') {
     groups[key].push({ year: ind.year, value: parseFloat(String(ind.value).replace(/,/g, '')) });
   }
 
-  // For line / area charts: combine into array of { year, series1, series2, ... }
   if (type === 'line' || type === 'area') {
     const years = new Set();
     for (const name in groups) {
@@ -396,7 +413,6 @@ function buildChartData(indicators, type = 'line') {
     return { type: type, data: chartData, xKey: 'year', series };
   }
 
-  // For bar charts: compare latest values
   if (type === 'bar') {
     const latestData = [];
     for (const name in groups) {
@@ -594,6 +610,18 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
   classification.language = detectedLang;
 
   // ---------- STAGE 3: RETRIEVAL (multi‑query, parallel) ----------
+  // Extract dataset filter from the filter object
+  let sourceFilter = null;
+  let yearFilter = null;
+  if (filter?.type === 'source' && filter?.value) {
+    sourceFilter = filter.value;
+  } else if (filter?.type === 'job' && filter?.value?.source_mcda) {
+    sourceFilter = filter.value.source_mcda;
+    if (filter.value.temporal_year) {
+      yearFilter = filter.value.temporal_year;
+    }
+  }
+
   const entities = classification.entities || [];
   const searchPromises = entities.map(entity =>
     searchIndicators({
@@ -602,14 +630,19 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
       geography: classification.geography,
       time_range: classification.time_range,
       limit: 10,
+      source_mcda: sourceFilter,
+      temporal_year: yearFilter,
     })
   );
+  // Also broad search
   const broadPromise = searchIndicators({
     query: normalizedQuery,
     pillars: classification.pillars,
     geography: classification.geography,
     time_range: classification.time_range,
     limit: 10,
+    source_mcda: sourceFilter,
+    temporal_year: yearFilter,
   });
   const results = await Promise.all([...searchPromises, broadPromise]);
   let allIndicators = [];
@@ -649,14 +682,12 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
   }
   const analytics = computeAnalytics(analyticsData, classification, normalizedQuery);
 
-  // ---------- STAGE 6: CHART GENERATION (NEW) ----------
+  // ---------- STAGE 6: CHART GENERATION ----------
   let chart = null;
   if (detectChartRequest(normalizedQuery) && topIndicators.length > 0) {
-    // Determine chart type from query
     let chartType = 'line';
     if (normalizedQuery.toLowerCase().includes('bar')) chartType = 'bar';
     else if (normalizedQuery.toLowerCase().includes('area')) chartType = 'area';
-    else if (normalizedQuery.toLowerCase().includes('pie')) chartType = 'pie'; // fallback to line
     chart = buildChartData(topIndicators, chartType);
   }
 
@@ -705,7 +736,7 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
 
   return {
     answer,
-    chart, // <-- NEW
+    chart,
     spi_citations: spiCitations.slice(0, 10),
     probability_score: analytics.probability || null,
     context_count: topIndicators.length,
