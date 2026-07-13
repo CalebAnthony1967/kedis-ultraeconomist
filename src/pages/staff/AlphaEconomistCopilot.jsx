@@ -55,6 +55,9 @@ export default function AlphaEconomistCopilot() {
   const [conversations, setConversations] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
 
+  // --- NEW: Follow‑up memory state ---
+  const [lastClassification, setLastClassification] = useState(null);
+
   const messagesEndRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -126,7 +129,6 @@ export default function AlphaEconomistCopilot() {
       // 1. Ensure we have a conversation ID before calling runRAG
       let currentConversationId = conversationId;
       if (!currentConversationId) {
-        // Create a new conversation with placeholder title
         const title = text.substring(0, 60) + (text.length > 60 ? '...' : '');
         const { id } = await saveConversation(null, [], title, lang, selectedFilter.label);
         currentConversationId = id;
@@ -134,10 +136,22 @@ export default function AlphaEconomistCopilot() {
         loadConversationsList();
       }
 
-      // 2. Call runRAG with the conversation ID so it auto-saves structured turns
-      const result = await runRAG(text, selectedFilter, lang, messages, currentConversationId);
+      // 2. Call runRAG with conversation ID and previous context
+      const result = await runRAG(
+        text,
+        selectedFilter,
+        lang,
+        messages,
+        currentConversationId,
+        lastClassification // <-- Follow‑up memory: pass previous classification
+      );
 
-      // 3. Build assistant message with additional metadata
+      // 3. Store the new classification for future follow‑ups
+      if (result.classification) {
+        setLastClassification(result.classification);
+      }
+
+      // 4. Build assistant message with additional metadata (including chart)
       const aiMsg = {
         role: 'assistant',
         content: result.answer || 'I could not process that query.',
@@ -149,11 +163,12 @@ export default function AlphaEconomistCopilot() {
         missing_entities: result.missing_entities || [],
         classification: result.classification,
         analytics: result.analytics,
+        chart: result.chart || null, // <-- NEW: chart data
       };
       const updatedMessages = [...newMessages, aiMsg];
       setMessages(updatedMessages);
 
-      // 4. Show warning if confidence is low
+      // 5. Show warning if confidence is low
       if (result.confidence !== undefined && result.confidence < 0.5) {
         toast({
           title: 'Low data confidence',
@@ -171,7 +186,7 @@ export default function AlphaEconomistCopilot() {
         });
       }
 
-      // 5. Update conversation list to reflect new message
+      // 6. Update conversation list to reflect new message
       loadConversationsList();
 
     } catch (e) {
@@ -237,6 +252,7 @@ export default function AlphaEconomistCopilot() {
   const handleNewConversation = () => {
     setMessages([]);
     setConversationId(null);
+    setLastClassification(null); // <-- Reset follow‑up memory
     setInput('');
     setShowHistory(false);
     toast({ title: 'New chat started', description: 'Context has been cleared' });
@@ -252,6 +268,18 @@ export default function AlphaEconomistCopilot() {
       if (error) throw error;
       setMessages(data.messages || []);
       setConversationId(data.id);
+      // Restore last classification from structured_context if available
+      if (data.structured_context) {
+        setLastClassification({
+          intent: data.structured_context.last_intent || 'fact',
+          entities: data.structured_context.last_entities || [],
+          geography: data.structured_context.last_geography || 'national',
+          time_range: data.structured_context.last_time_range || { start: 2000, end: new Date().getFullYear() },
+          pillars: data.structured_context.last_pillars || [],
+        });
+      } else {
+        setLastClassification(null);
+      }
       setShowHistory(false);
       toast({ title: 'Conversation loaded' });
     } catch (e) {
