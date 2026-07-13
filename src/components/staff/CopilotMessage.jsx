@@ -1,8 +1,9 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   Brain, Hash, TrendingUp, FileText, Route, Database,
-  ChevronDown, ChevronUp, Copy, Check
+  ChevronDown, ChevronUp, Copy, Check, AlertCircle,
+  BarChart3, TrendingDown, Minus
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/use-toast';
@@ -10,6 +11,7 @@ import { useToast } from '@/components/ui/use-toast';
 export default function CopilotMessage({ message, onRouteToPS }) {
   const isUser = message.role === 'user';
   const [showSources, setShowSources] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
@@ -30,10 +32,90 @@ export default function CopilotMessage({ message, onRouteToPS }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Confidence helpers
+  const confidence = message.confidence;
+  const missingEntities = message.missing_entities || [];
+  const hasMissing = missingEntities.length > 0;
+  const hasAnalytics = message.analytics && Object.keys(message.analytics).length > 0;
+
+  const getConfidenceColor = (val) => {
+    if (val === undefined || val === null) return 'bg-muted text-muted-foreground';
+    if (val >= 0.7) return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
+    if (val >= 0.4) return 'bg-amber-500/10 text-amber-600 border-amber-500/20';
+    return 'bg-red-500/10 text-red-600 border-red-500/20';
+  };
+
+  const getConfidenceLabel = (val) => {
+    if (val === undefined || val === null) return 'Unknown';
+    if (val >= 0.7) return 'High';
+    if (val >= 0.4) return 'Medium';
+    return 'Low';
+  };
+
+  // Analytics helpers
+  const renderAnalytics = () => {
+    if (!hasAnalytics) return null;
+    const entries = Object.entries(message.analytics);
+    return (
+      <div className="mt-3">
+        <button
+          onClick={() => setShowAnalytics(!showAnalytics)}
+          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+        >
+          {showAnalytics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          <BarChart3 className="h-3 w-3" />
+          Analytics ({entries.length})
+        </button>
+        {showAnalytics && (
+          <div className="mt-2 rounded-lg border border-border bg-secondary/30 p-3 text-xs">
+            {entries.map(([id, stats]) => (
+              <div key={id} className="flex items-center gap-4 py-1 border-b border-border/50 last:border-0">
+                <span className="font-medium text-foreground truncate max-w-[40%]">
+                  {id.substring(0, 8)}…
+                </span>
+                <div className="flex items-center gap-2 flex-1">
+                  {stats.cagr !== null && stats.cagr !== undefined ? (
+                    <span className="flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3 text-primary" />
+                      {stats.cagr.toFixed(1)}% CAGR
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                  <span className="text-muted-foreground">·</span>
+                  {stats.trend?.direction === 'increasing' && (
+                    <span className="flex items-center gap-1 text-emerald-600">
+                      <TrendingUp className="h-3 w-3" /> Up
+                    </span>
+                  )}
+                  {stats.trend?.direction === 'decreasing' && (
+                    <span className="flex items-center gap-1 text-red-600">
+                      <TrendingDown className="h-3 w-3" /> Down
+                    </span>
+                  )}
+                  {stats.trend?.direction === 'stable' && (
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Minus className="h-3 w-3" /> Stable
+                    </span>
+                  )}
+                  {stats.volatility !== null && stats.volatility !== undefined && (
+                    <span className="text-muted-foreground">
+                      · Vol: {stats.volatility.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex justify-start animate-slide-up">
       <div className="max-w-[85%] w-full">
-        <div className="flex items-center gap-2 mb-1.5">
+        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-primary">
             <Brain className="h-3.5 w-3.5 text-white" />
           </div>
@@ -44,7 +126,41 @@ export default function CopilotMessage({ message, onRouteToPS }) {
               {message.context_count} sources
             </span>
           )}
+
+          {/* Confidence badge */}
+          {confidence !== undefined && confidence !== null && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${getConfidenceColor(confidence)}`}>
+                  <span className="font-bold">{Math.round(confidence * 100)}%</span>
+                  <span className="opacity-70">{getConfidenceLabel(confidence)}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Data confidence based on available indicators</TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Missing entities warning */}
+          {hasMissing && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1 cursor-help">
+                  <AlertCircle className="h-3 w-3" />
+                  {missingEntities.length} missing
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="max-w-xs">
+                  <p className="font-semibold">Missing indicators:</p>
+                  <ul className="list-disc list-inside text-xs">
+                    {missingEntities.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
+
         <div className="rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3">
           <ReactMarkdown className="text-sm text-foreground/90 prose prose-sm max-w-none prose-p:my-1 prose-li:my-0 prose-strong:text-foreground prose-headings:font-heading">
             {message.content}
@@ -82,6 +198,9 @@ export default function CopilotMessage({ message, onRouteToPS }) {
               ))}
             </div>
           )}
+
+          {/* Analytics section */}
+          {renderAnalytics()}
 
           {/* Retrieved sources (expandable) */}
           {message.retrieved_indicators && message.retrieved_indicators.length > 0 && (
