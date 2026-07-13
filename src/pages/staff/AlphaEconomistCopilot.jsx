@@ -113,6 +113,16 @@ export default function AlphaEconomistCopilot() {
   }, [loadJobs, loadConversationsList]);
 
   // -------------------------------------------------------------------------
+  // Helper to generate filter description
+  // -------------------------------------------------------------------------
+  const getFilterDescription = (filter) => {
+    if (filter.type === 'all') return 'All Sovereign Data';
+    if (filter.type === 'source') return `Source: ${filter.value}`;
+    if (filter.type === 'job') return `File: ${filter.label}`;
+    return filter.label;
+  };
+
+  // -------------------------------------------------------------------------
   // Send message with RAG (full workflow)
   // -------------------------------------------------------------------------
   const handleSend = async (query) => {
@@ -367,7 +377,14 @@ export default function AlphaEconomistCopilot() {
               selectedFilter={selectedFilter}
               onSelectFilter={(filter) => {
                 setSelectedFilter(filter);
-                toast({ title: 'Dataset selected', description: filter.label });
+                // --- IMPROVED TOAST MESSAGE ---
+                const isAll = filter.type === 'all';
+                const description = getFilterDescription(filter);
+                toast({
+                  title: isAll ? 'Filter cleared' : 'Filter applied',
+                  description: description,
+                  duration: 3000,
+                });
               }}
               isLoading={isLoadingJobs}
               onRefresh={loadJobs}
