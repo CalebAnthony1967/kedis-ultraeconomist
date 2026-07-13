@@ -29,6 +29,30 @@ const HF_MODEL = 'google/flan-t5-xxl';
 const HF_URL = `https://api-inference.huggingface.co/models/${HF_MODEL}`;
 
 // ============================================================
+// PILLAR MAPPING (fix enum error)
+// ============================================================
+
+const PILLAR_MAP = {
+  macroeconomic: 'Economic',
+  fiscal: 'Economic',
+  trade: 'Economic',
+  agriculture: 'Economic',
+  social: 'Social',
+  governance: 'Governance',
+  environmental: 'Environmental',
+  political: 'Political',
+  economic: 'Economic',
+  // add more as needed
+};
+
+function mapPillars(pillars) {
+  if (!pillars || pillars.length === 0) return [];
+  const mapped = pillars.map(p => PILLAR_MAP[p.toLowerCase()]).filter(Boolean);
+  // Remove duplicates
+  return [...new Set(mapped)];
+}
+
+// ============================================================
 // 1. INTAKE & LANGUAGE DETECTION
 // ============================================================
 
@@ -143,7 +167,7 @@ function getDefaultClassification(query) {
 }
 
 // ============================================================
-// 3. MCP‑STYLE RETRIEVAL TOOLS (UPDATED to accept filter)
+// 3. MCP‑STYLE RETRIEVAL TOOLS (UPDATED)
 // ============================================================
 
 async function searchIndicators({
@@ -152,18 +176,20 @@ async function searchIndicators({
   geography,
   time_range,
   limit = 15,
-  source_mcda = null,      // <-- NEW
-  temporal_year = null,    // <-- NEW
+  source_mcda = null,
+  temporal_year = null,
 }) {
   let supabaseQuery = supabase
     .from('indicators')
     .select('*')
     .limit(limit);
 
-  // Apply pillar filter
+  // Apply pillar filter with mapping
   if (pillars && pillars.length > 0) {
-    const pillarEnum = pillars.map(p => p.charAt(0).toUpperCase() + p.slice(1));
-    supabaseQuery = supabaseQuery.in('pillar', pillarEnum);
+    const mappedPillars = mapPillars(pillars);
+    if (mappedPillars.length > 0) {
+      supabaseQuery = supabaseQuery.in('pillar', mappedPillars);
+    }
   }
   // Apply geography
   if (geography && geography !== 'national' && geography !== 'global') {
@@ -177,7 +203,7 @@ async function searchIndicators({
     supabaseQuery = supabaseQuery.lte('year', time_range.end);
   }
 
-  // ----- NEW: Apply dataset filter -----
+  // Apply dataset filter
   if (source_mcda) {
     supabaseQuery = supabaseQuery.eq('source_mcda', source_mcda);
   }
@@ -610,7 +636,6 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
   classification.language = detectedLang;
 
   // ---------- STAGE 3: RETRIEVAL (multi‑query, parallel) ----------
-  // Extract dataset filter from the filter object
   let sourceFilter = null;
   let yearFilter = null;
   if (filter?.type === 'source' && filter?.value) {
@@ -634,7 +659,6 @@ export async function runRAG(query, filter, lang = 'en', messages = [], conversa
       temporal_year: yearFilter,
     })
   );
-  // Also broad search
   const broadPromise = searchIndicators({
     query: normalizedQuery,
     pillars: classification.pillars,
