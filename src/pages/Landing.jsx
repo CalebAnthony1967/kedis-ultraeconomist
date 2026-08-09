@@ -16,7 +16,7 @@ import {
 export default function Landing() {
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user } = useAuth(); // Sovereign Auth Context
   const [scrolled, setScrolled] = useState(false);
   const [activePortal, setActivePortal] = useState(null);
 
@@ -61,6 +61,26 @@ export default function Landing() {
   ];
 
   const portals = [
+    {
+      path: '/admin',
+      icon: Shield,
+      title: lang === 'sw' ? 'Utawala wa Mfumo' : 'System Administration',
+      desc: lang === 'sw' 
+        ? 'Dhibiti vyanzo vya data, ufikiaji wa watumiaji, na usalama wa mfumo.'
+        : 'Manage data sources, user access, and system security.',
+      accent: 'from-amber-500 to-orange-600',
+      glow: 'shadow-amber-500/20',
+      features: [
+        'Multi-Source "Connect to Data" Engine',
+        'Silo-Healing (Auto Forward-Fill)',
+        'FAIR Scorecard & SPI Tagging',
+        'Master Record Management (CRUD)',
+        'Super Admin Vault (Double-Lock MFA)',
+        'National Audit Trail (SHA-256)',
+        'Privacy Master-Switch (KDPA)',
+        'Routing Control',
+      ],
+    },
     {
       path: '/staff',
       icon: Brain,
@@ -110,20 +130,24 @@ export default function Landing() {
   ];
 
   const handlePortalAccess = (path) => {
+    // Normalise the path: ensure it's a non-empty string starting with '/'
     const safePath = (typeof path === 'string' && path.trim().startsWith('/')) 
       ? path.trim() 
       : '/';
 
+    // Public Portal is open access
     if (safePath === '/public' || safePath === '/public/gateway') {
       navigate('/public/gateway');
       return;
     }
 
+    // Protected portals
     if (!isAuthenticated) {
       navigate(`/login?next=${encodeURIComponent(safePath)}`);
       return;
     }
 
+    // Role checks remain the same, but use safePath
     if (safePath === '/admin') {
       if (user?.role === 'admin' || user?.role === 'super_admin') {
         navigate('/admin');
@@ -337,12 +361,12 @@ export default function Landing() {
           <h2 className="font-display text-3xl lg:text-4xl font-extrabold text-foreground">{t('portal.select')}</h2>
           <p className="mt-3 text-muted-foreground max-w-2xl mx-auto">
             {lang === 'sw'
-              ? 'Majukwaa mawili — kila moja limeundwa kwa watumiaji wake.'
-              : 'Two portals — each tailored to its users.'}
+              ? 'Majukwaa matatu yanayotumia RBAC — kila moja limeundwa kwa watumiaji wake.'
+              : 'Three role-based portals with strict RBAC — each tailored to its users.'}
           </p>
         </motion.div>
 
-        <div className="grid lg:grid-cols-2 gap-6 max-w-4xl mx-auto">
+        <div className="grid lg:grid-cols-3 gap-6">
           {portals.map((portal, i) => (
             <motion.div
               key={i}
@@ -519,11 +543,11 @@ export default function Landing() {
                 {lang === 'sw' ? 'Rasilimali' : 'Resources'}
               </h4>
               <ul className="space-y-2.5">
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Kuhusu KIPPRA' : 'About KIPPRA'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Mbinu ya Data' : 'Data Methodology'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Pakua Data' : 'Bulk Downloads'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Nyaraka' : 'Documentation'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Maswali Yanayoulizwa' : 'FAQ'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Kuhusu KIPPRA' : 'About KIPPRA'}</a></li>
+                <li><a href__="#how-it-works" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Mbinu ya Data' : 'Data Methodology'}</a></li>
+                <li><Link to="/public/research" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Pakua Data' : 'Bulk Downloads'}</Link></li>
+                <li><a href__="#how-it-works" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Nyaraka' : 'Documentation'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Maswali Yanayoulizwa' : 'FAQ'}</a></li>
               </ul>
             </div>
 
@@ -533,11 +557,11 @@ export default function Landing() {
                 {lang === 'sw' ? 'Sheria & Faragha' : 'Legal & Privacy'}
               </h4>
               <ul className="space-y-2.5">
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Sera ya Faragha' : 'Privacy Policy'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Masharti ya Matumizi' : 'Terms of Use'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Notisi ya Ulinzi wa Data' : 'Data Protection Notice'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Taarifa ya Ufikiaji' : 'Accessibility Statement'}</a></li>
-                <li><a href__="#" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Sera ya Cookies' : 'Cookie Policy'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Sera ya Faragha' : 'Privacy Policy'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Masharti ya Matumizi' : 'Terms of Use'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Notisi ya Ulinzi wa Data' : 'Data Protection Notice'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Taarifa ya Ufikiaji' : 'Accessibility Statement'}</a></li>
+                <li><a href__="#about" className="text-xs text-muted-foreground hover:text-primary transition-colors">{lang === 'sw' ? 'Sera ya Cookies' : 'Cookie Policy'}</a></li>
               </ul>
             </div>
 
