@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/lib/i18n';
 // Custom toast implementation replaces the default hook
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,6 +16,13 @@ import {
   computeSHA256, parseFile, autoSuggestMapping, validateRow,
   calculateFairScore, saveEtlState, loadEtlState, clearEtlState,
   GLOBAL_SCHEMA_FIELDS,
+  COUNTY_SCHEMA_FIELDS,
+  detectDataFormat,
+  autoSuggestMappingCounty,
+  parseCountyFile,
+  validateCountyRow,
+  transformCountyRow,
+  getOrCreateDomainSubdomain,
 } from '@/lib/etlUtils';
 import { ArrowRight, FileCheck, Info, Database, CheckCircle2, X } from 'lucide-react';
 
@@ -65,6 +72,10 @@ export default function ETLPipeline() {
   const [recentJobs, setRecentJobs] = useState([]);
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
 
+  // NEW: Upload type state
+  const [uploadType, setUploadType] = useState('national');
+  const [sheetProgress, setSheetProgress] = useState({ current: 0, total: 0 });
+
   // -------------------------------------------------------------------------
   // Session Persistence — restore on mount
   // -------------------------------------------------------------------------
@@ -83,6 +94,7 @@ export default function ETLPipeline() {
       setRawRows(saved.rawRows || []);
       setHeaders(saved.headers || []);
       setMapping(saved.mapping || {});
+      setUploadType(saved.uploadType || 'national');
 
       if (restoredStage !== 'upload') {
         toast({
@@ -107,9 +119,10 @@ export default function ETLPipeline() {
         rawRows,
         headers,
         mapping,
+        uploadType,
       });
     }
-  }, [stage, fileMetadata, sourceMCDA, frameworkName, temporalYear, rawRows, headers, mapping]);
+  }, [stage, fileMetadata, sourceMCDA, frameworkName, temporalYear, rawRows, headers, mapping, uploadType]);
 
   // -------------------------------------------------------------------------
   // Job History
@@ -132,7 +145,7 @@ export default function ETLPipeline() {
   }, []);
 
   // -------------------------------------------------------------------------
-  // Enhanced auto-mapping
+  // Enhanced auto-mapping (national)
   // -------------------------------------------------------------------------
   const enhanceMapping = (autoMap, headersList) => {
     const enhanced = { ...autoMap };
@@ -222,11 +235,45 @@ export default function ETLPipeline() {
       const file_uri = data?.path || filePath;
 
       setStepLabel(`Parsing ${ext} file…`);
-      const rows = await parseFile(selectedFile);
-      const fileHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
+      let rows, fileHeaders;
+      
+      // Detect if this is a county file (multi-sheet XLSX)
+      let detectedType = 'national';
+      
+      if (ext === 'XLSX') {
+        try {
+          // Parse all sheets for county detection
+          const countyResult = await parseCountyFile(selectedFile);
+          rows = countyResult.rows;
+          fileHeaders = countyResult.headers;
+          // Auto-detect data format
+          detectedType = detectDataFormat(fileHeaders);
+        } catch (parseErr) {
+          // If parseCountyFile fails, fall back to regular parsing
+          console.warn('County parse fallback:', parseErr);
+          rows = await parseFile(selectedFile);
+          fileHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
+          detectedType = detectDataFormat(fileHeaders);
+        }
+      } else {
+        rows = await parseFile(selectedFile);
+        fileHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
+        detectedType = detectDataFormat(fileHeaders);
+      }
 
-      let autoMapping = autoSuggestMapping(fileHeaders);
-      autoMapping = enhanceMapping(autoMapping, fileHeaders);
+      // Set upload type based on detection
+      const finalUploadType = detectedType === 'county' ? 'county' : 'national';
+      setUploadType(finalUploadType);
+
+      let autoMapping;
+      if (finalUploadType === 'county') {
+        autoMapping = autoSuggestMappingCounty(fileHeaders);
+        // Auto-map sheet names to county_code if a column exists
+        // The mapping will handle this via the __sheet attribute
+      } else {
+        autoMapping = autoSuggestMapping(fileHeaders);
+        autoMapping = enhanceMapping(autoMapping, fileHeaders);
+      }
 
       setFileMetadata({
         file_uri,
@@ -242,8 +289,9 @@ export default function ETLPipeline() {
       setStage('preview');
 
       const mappedCount = Object.values(autoMapping).filter(v => v).length;
+      const dataTypeLabel = finalUploadType === 'county' ? 'County' : 'National';
       toast({
-        title: 'File processed & auto-mapped',
+        title: `${dataTypeLabel} file processed & auto-mapped`,
         description: `${rows.length} rows · ${mappedCount} columns intelligently mapped`,
         duration: 3000,
       });
@@ -281,6 +329,8 @@ export default function ETLPipeline() {
     setFrameworkName('');
     setTemporalYear('');
     setStage('upload');
+    setUploadType('national');
+    setSheetProgress({ current: 0, total: 0 });
     clearEtlState();
     toast({
       title: 'File removed',
@@ -291,16 +341,189 @@ export default function ETLPipeline() {
   };
 
   // -------------------------------------------------------------------------
+  // Domain Resolver for County Data
+  // -------------------------------------------------------------------------
+  const domainResolver = useCallback(async (domainName, subdomainCode, subdomainName) => {
+    return await getOrCreateDomainSubdomain(supabase, domainName, subdomainCode, subdomainName);
+  }, []);
+
+  // -------------------------------------------------------------------------
   // Validate + Ingest
   // -------------------------------------------------------------------------
   const handleValidateAndIngest = async () => {
-    const requiredFields = GLOBAL_SCHEMA_FIELDS.filter(f => f.required);
+    // --- NATIONAL DATA ---
+    if (uploadType === 'national') {
+      const requiredFields = GLOBAL_SCHEMA_FIELDS.filter(f => f.required);
+      const mappedTargets = new Set(Object.values(mapping).filter(Boolean));
+      const missingRequired = requiredFields.filter(f => !mappedTargets.has(f.key));
+
+      if (missingRequired.length > 0) {
+        toast({
+          title: 'Mapping incomplete',
+          description: `Required fields not mapped: ${missingRequired.map(f => f.label).join(', ')}`,
+          variant: 'destructive',
+          duration: 3000,
+        });
+        return;
+      }
+
+      setStage('validating');
+      setValidationProgress(5);
+      setStepLabel('Running FAIR data contract validation…');
+
+      try {
+        await new Promise(r => setTimeout(r, 100));
+
+        const defaults = {
+          source_mcda: sourceMCDA,
+          ...(temporalYear ? { year: parseInt(temporalYear, 10) } : {}),
+        };
+
+        const valid = [];
+        const errors = [];
+
+        for (let i = 0; i < rawRows.length; i++) {
+          const result = validateRow(rawRows[i], mapping, defaults);
+          if (result.valid) {
+            valid.push(result.record);
+          } else {
+            errors.push({ row: i + 2, errors: result.errors });
+          }
+          if (i % 200 === 0) {
+            setValidationProgress(5 + Math.round((i / rawRows.length) * 40));
+            await new Promise(r => setTimeout(r, 0));
+          }
+        }
+
+        if (valid.length === 0) {
+          throw new Error('All rows failed validation. Please check your mapping and data.');
+        }
+
+        setValidationProgress(50);
+        setStepLabel(`Preparing ${valid.length} records…`);
+
+        const uniqueMap = new Map();
+        for (const record of valid) {
+          const key = `${record.indicator_id}|${record.year}|${record.source_mcda}`;
+          uniqueMap.set(key, record);
+        }
+        const uniqueValid = Array.from(uniqueMap.values());
+        const duplicateCount = valid.length - uniqueValid.length;
+        if (duplicateCount > 0) {
+          toast({
+            title: 'Duplicates removed',
+            description: `${duplicateCount} duplicate records were merged based on unique constraints`,
+            variant: 'warning',
+            duration: 3000,
+          });
+        }
+
+        const user = await supabaseAuth.me();
+
+        let inserted = 0;
+        const totalRecords = uniqueValid.length;
+        for (let i = 0; i < totalRecords; i += 500) {
+          const batch = uniqueValid.slice(i, i + 500).map(r => ({
+            ...r,
+            created_by: user.id,
+            is_verified: false,
+          }));
+          const { data, error: insertError } = await supabase
+            .from('indicators')
+            .upsert(batch, { onConflict: 'indicator_id, year, source_mcda' })
+            .select('id');
+          if (insertError) throw insertError;
+          inserted += data?.length || 0;
+          setValidationProgress(50 + Math.round((i + batch.length) / totalRecords * 30));
+        }
+
+        setValidationProgress(85);
+        setStepLabel('Creating ingestion job record…');
+
+        const fairScore = calculateFairScore(uniqueValid[0] || {});
+
+        const { data: job, error: jobError } = await supabase
+          .from('data_ingestion_jobs')
+          .insert({
+            file_name: fileMetadata.file_name,
+            file_type: fileMetadata.file_type,
+            source_mcda: sourceMCDA,
+            upload_type: 'national',
+            status: errors.length > 0 ? 'anomaly' : 'ingested',
+            records_ingested: inserted,
+            validation_errors: errors.length > 0 ? JSON.stringify(errors.slice(0, 50)) : null,
+            sha256_hash: fileMetadata.sha256_hash,
+            spi_assigned: true,
+            framework_name: frameworkName || null,
+            temporal_year: temporalYear ? parseInt(temporalYear, 10) : null,
+            fair_score: fairScore,
+            file_uri: fileMetadata.file_uri,
+            created_by: user.id,
+          })
+          .select()
+          .single();
+
+        if (jobError) throw jobError;
+
+        setValidationProgress(95);
+        setStepLabel('Recording SHA-256 audit lineage…');
+
+        await supabase.from('audit_logs').insert({
+          action: 'upload',
+          user_email: user.email,
+          user_role: user.portal_role,
+          target_entity: 'indicators',
+          target_id: job?.id,
+          details: `Ingested ${inserted} national records from ${fileMetadata.file_name} (${fileMetadata.file_type})`,
+          sha256_hash: fileMetadata.sha256_hash,
+        });
+
+        setValidationProgress(100);
+        setStepLabel('Ingestion complete');
+
+        setIngestionResult({
+          inserted,
+          errors: errors.length,
+          fairScore,
+          sha256: fileMetadata.sha256_hash,
+          spi: job?.spi_assigned ? `KEDIS-SPI-${String(job.id).substring(0, 8)}` : null,
+          errorDetails: errors.slice(0, 50),
+        });
+
+        setStage('done');
+        clearEtlState();
+
+        toast({
+          title: 'National ingestion successful',
+          description: `${inserted} records committed to Sovereign Data Pool`,
+          duration: 3000,
+        });
+
+        loadRecentJobs();
+      } catch (error) {
+        toast({
+          title: 'Ingestion failed',
+          description: error.message || 'An unexpected error occurred during ingestion',
+          variant: 'destructive',
+          duration: 3000,
+        });
+        setStage('preview');
+      } finally {
+        setStepLabel('');
+        setValidationProgress(0);
+      }
+      return;
+    }
+
+    // --- COUNTY DATA ---
+    // County-specific validation
+    const countyRequiredFields = COUNTY_SCHEMA_FIELDS.filter(f => f.required);
     const mappedTargets = new Set(Object.values(mapping).filter(Boolean));
-    const missingRequired = requiredFields.filter(f => !mappedTargets.has(f.key));
+    const missingRequired = countyRequiredFields.filter(f => !mappedTargets.has(f.key));
 
     if (missingRequired.length > 0) {
       toast({
-        title: 'Mapping incomplete',
+        title: 'County mapping incomplete',
         description: `Required fields not mapped: ${missingRequired.map(f => f.label).join(', ')}`,
         variant: 'destructive',
         duration: 3000,
@@ -310,93 +533,113 @@ export default function ETLPipeline() {
 
     setStage('validating');
     setValidationProgress(5);
-    setStepLabel('Running FAIR data contract validation…');
+    setStepLabel('Validating county data…');
 
     try {
       await new Promise(r => setTimeout(r, 100));
 
       const defaults = {
-        source_mcda: sourceMCDA,
-        ...(temporalYear ? { year: parseInt(temporalYear, 10) } : {}),
+        data_source: sourceMCDA || 'County Government',
+        ingestion_job_id: null, // will be set after job creation
       };
 
-      const valid = [];
-      const errors = [];
-
-      for (let i = 0; i < rawRows.length; i++) {
-        const result = validateRow(rawRows[i], mapping, defaults);
-        if (result.valid) {
-          valid.push(result.record);
-        } else {
-          errors.push({ row: i + 2, errors: result.errors });
-        }
-        if (i % 200 === 0) {
-          setValidationProgress(5 + Math.round((i / rawRows.length) * 40));
-          await new Promise(r => setTimeout(r, 0));
-        }
+      // Group rows by sheet for progress tracking
+      const sheets = {};
+      for (const row of rawRows) {
+        const sheet = row.__sheet || 'Unknown';
+        if (!sheets[sheet]) sheets[sheet] = [];
+        sheets[sheet].push(row);
       }
 
-      if (valid.length === 0) {
-        throw new Error('All rows failed validation. Please check your mapping and data.');
+      const sheetNames = Object.keys(sheets);
+      const totalSheets = sheetNames.length;
+      let processedSheets = 0;
+      const allValidRecords = [];
+      const allErrors = [];
+
+      // Process each sheet
+      for (const sheetName of sheetNames) {
+        const sheetRows = sheets[sheetName];
+        processedSheets++;
+        setSheetProgress({ current: processedSheets, total: totalSheets });
+        setStepLabel(`Processing sheet ${processedSheets} of ${totalSheets} (${sheetName})…`);
+        setValidationProgress(5 + Math.round((processedSheets / totalSheets) * 40));
+
+        // Auto-extract county_code from sheet name if it matches 3-digit code
+        const sheetCode = sheetName.match(/^(\d{3})/);
+        if (sheetCode) {
+          // Inject county_code into each row if not already present
+          for (const row of sheetRows) {
+            if (!row.county_code) {
+              row.county_code = sheetCode[1];
+            }
+          }
+        }
+
+        for (const row of sheetRows) {
+          const result = validateCountyRow(row, mapping, defaults);
+          if (result.valid) {
+            allValidRecords.push(result.record);
+          } else {
+            allErrors.push({ sheet: sheetName, row: row.__row || 0, errors: result.errors });
+          }
+        }
+
+        // Small delay to allow UI update
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      if (allValidRecords.length === 0) {
+        throw new Error('All rows failed validation. Please check your county data and mapping.');
       }
 
       setValidationProgress(50);
-      setStepLabel(`Preparing ${valid.length} records…`);
+      setStepLabel(`Transforming ${allValidRecords.length} county records…`);
 
-      const uniqueMap = new Map();
-      for (const record of valid) {
-        const key = `${record.indicator_id}|${record.year}|${record.source_mcda}`;
-        uniqueMap.set(key, record);
-      }
-      const uniqueValid = Array.from(uniqueMap.values());
-      const duplicateCount = valid.length - uniqueValid.length;
-      if (duplicateCount > 0) {
-        toast({
-          title: 'Duplicates removed',
-          description: `${duplicateCount} duplicate records were merged based on unique constraints`,
-          variant: 'warning',
-          duration: 3000,
-        });
+      // Transform records (expand years)
+      const transformedRecords = [];
+      for (const record of allValidRecords) {
+        // Create a fake row with year columns from the record
+        const rowWithYears = { ...record };
+        // The transform function expects year columns in the row
+        // We'll add them from the record's year/value if present, or from the raw row
+        const transformed = await transformCountyRow(
+          rowWithYears,
+          mapping,
+          { ...defaults, source_mcda: sourceMCDA || 'County Government' },
+          domainResolver
+        );
+        transformedRecords.push(...transformed);
       }
 
+      if (transformedRecords.length === 0) {
+        throw new Error('No valid year values found in the county data.');
+      }
+
+      setValidationProgress(70);
+      setStepLabel(`Ingesting ${transformedRecords.length} county records…`);
+
+      // Get user
       const user = await supabaseAuth.me();
 
-      let inserted = 0;
-      const totalRecords = uniqueValid.length;
-      for (let i = 0; i < totalRecords; i += 500) {
-        const batch = uniqueValid.slice(i, i + 500).map(r => ({
-          ...r,
-          created_by: user.id,
-          is_verified: false,
-        }));
-        const { data, error: insertError } = await supabase
-          .from('indicators')
-          .upsert(batch, { onConflict: 'indicator_id, year, source_mcda' })
-          .select('id');
-        if (insertError) throw insertError;
-        inserted += data?.length || 0;
-        setValidationProgress(50 + Math.round((i + batch.length) / totalRecords * 30));
-      }
-
-      setValidationProgress(85);
-      setStepLabel('Creating ingestion job record…');
-
-      const fairScore = calculateFairScore(uniqueValid[0] || {});
-
+      // Create ingestion job first
       const { data: job, error: jobError } = await supabase
         .from('data_ingestion_jobs')
         .insert({
           file_name: fileMetadata.file_name,
           file_type: fileMetadata.file_type,
-          source_mcda: sourceMCDA,
-          status: errors.length > 0 ? 'anomaly' : 'ingested',
-          records_ingested: inserted,
-          validation_errors: errors.length > 0 ? JSON.stringify(errors.slice(0, 50)) : null,
+          source_mcda: sourceMCDA || 'County Government',
+          upload_type: 'county',
+          total_sheets: totalSheets,
+          processed_sheets: 0,
+          status: 'pending',
+          records_ingested: 0,
+          validation_errors: allErrors.length > 0 ? JSON.stringify(allErrors.slice(0, 50)) : null,
           sha256_hash: fileMetadata.sha256_hash,
           spi_assigned: true,
           framework_name: frameworkName || null,
           temporal_year: temporalYear ? parseInt(temporalYear, 10) : null,
-          fair_score: fairScore,
+          fair_score: 0,
           file_uri: fileMetadata.file_uri,
           created_by: user.id,
         })
@@ -405,45 +648,77 @@ export default function ETLPipeline() {
 
       if (jobError) throw jobError;
 
-      setValidationProgress(95);
-      setStepLabel('Recording SHA-256 audit lineage…');
+      // Batch insert records with job_id
+      let inserted = 0;
+      const totalRecords = transformedRecords.length;
+      for (let i = 0; i < totalRecords; i += 500) {
+        const batch = transformedRecords.slice(i, i + 500).map(r => ({
+          ...r,
+          created_by: user.id,
+          is_verified: false,
+          ingestion_job_id: job.id,
+          source_mcda: sourceMCDA || 'County Government',
+        }));
+        const { data, error: insertError } = await supabase
+          .from('indicators')
+          .upsert(batch, { onConflict: 'indicator_id, year, source_mcda, county_code' })
+          .select('id');
+        if (insertError) throw insertError;
+        inserted += data?.length || 0;
+        setValidationProgress(70 + Math.round((i + batch.length) / totalRecords * 25));
+      }
 
+      setValidationProgress(95);
+      setStepLabel('Recording audit lineage…');
+
+      // Update job status
+      await supabase
+        .from('data_ingestion_jobs')
+        .update({
+          status: allErrors.length > 0 ? 'anomaly' : 'ingested',
+          records_ingested: inserted,
+          processed_sheets: totalSheets,
+          fair_score: calculateFairScore(transformedRecords[0] || {}),
+        })
+        .eq('id', job.id);
+
+      // Audit log
       await supabase.from('audit_logs').insert({
         action: 'upload',
         user_email: user.email,
         user_role: user.portal_role,
         target_entity: 'indicators',
         target_id: job?.id,
-        details: `Ingested ${inserted} records from ${fileMetadata.file_name} (${fileMetadata.file_type})`,
+        details: `Ingested ${inserted} county records from ${fileMetadata.file_name} (${totalSheets} sheets, ${allErrors.length} errors)`,
         sha256_hash: fileMetadata.sha256_hash,
       });
 
       setValidationProgress(100);
-      setStepLabel('Ingestion complete');
+      setStepLabel('County ingestion complete');
 
       setIngestionResult({
         inserted,
-        errors: errors.length,
-        fairScore,
+        errors: allErrors.length,
+        fairScore: calculateFairScore(transformedRecords[0] || {}),
         sha256: fileMetadata.sha256_hash,
         spi: job?.spi_assigned ? `KEDIS-SPI-${String(job.id).substring(0, 8)}` : null,
-        errorDetails: errors.slice(0, 50),
+        errorDetails: allErrors.slice(0, 50),
       });
 
       setStage('done');
       clearEtlState();
 
       toast({
-        title: 'Ingestion successful',
-        description: `${inserted} records committed to Sovereign Data Pool`,
+        title: 'County ingestion successful',
+        description: `${inserted} records from ${totalSheets} sheets committed to Sovereign Data Pool`,
         duration: 3000,
       });
 
       loadRecentJobs();
     } catch (error) {
       toast({
-        title: 'Ingestion failed',
-        description: error.message || 'An unexpected error occurred during ingestion',
+        title: 'County ingestion failed',
+        description: error.message || 'An unexpected error occurred during county ingestion',
         variant: 'destructive',
         duration: 3000,
       });
@@ -451,6 +726,7 @@ export default function ETLPipeline() {
     } finally {
       setStepLabel('');
       setValidationProgress(0);
+      setSheetProgress({ current: 0, total: 0 });
     }
   };
 
@@ -466,6 +742,8 @@ export default function ETLPipeline() {
     setSourceMCDA('');
     setFrameworkName('');
     setTemporalYear('');
+    setUploadType('national');
+    setSheetProgress({ current: 0, total: 0 });
     setIngestionResult(null);
     clearEtlState();
   };
@@ -504,6 +782,12 @@ export default function ETLPipeline() {
             Sovereign data ingestion with silo-healing, FAIR validation, SPI assignment, and SHA-256 audit lineage.
             <Info className="h-3.5 w-3.5 text-muted-foreground" />
           </p>
+          {uploadType === 'county' && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+              <Database className="h-3 w-3" />
+              County Data Mode – {sheetProgress.total > 0 ? `${sheetProgress.current}/${sheetProgress.total} sheets` : 'Multi-sheet ready'}
+            </div>
+          )}
         </div>
 
         <div className="grid lg:grid-cols-[1fr_320px] gap-6">
@@ -579,7 +863,9 @@ export default function ETLPipeline() {
                     <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-foreground">Intelligent Auto‑Mapping Applied</p>
+                    <p className="text-sm font-bold text-foreground">
+                      {uploadType === 'county' ? 'County Data' : 'National Data'} – Auto‑Mapping Applied
+                    </p>
                     <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
                       {Object.values(mapping).filter(v => v).length} of {headers.length} headers automatically mapped.
                       <br />
@@ -587,6 +873,11 @@ export default function ETLPipeline() {
                         {Object.entries(mapping).filter(([, v]) => v).map(([k, v]) => `${k} → ${v}`).join(' · ')}
                       </span>
                     </p>
+                    {uploadType === 'county' && sheetProgress.total > 0 && (
+                      <p className="text-xs text-primary mt-1">
+                        📊 {sheetProgress.total} sheets detected – will process each separately
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -601,14 +892,18 @@ export default function ETLPipeline() {
                     className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition-all hover:shadow-lg"
                   >
                     <FileCheck className="h-4 w-4" />
-                    Validate & Ingest to Sovereign Pool
+                    {uploadType === 'county' ? 'Validate & Ingest County Data' : 'Validate & Ingest to Sovereign Pool'}
                   </button>
                 </div>
               </div>
             )}
 
             {stage === 'validating' && (
-              <ETLValidationGate progress={validationProgress} stepLabel={stepLabel} />
+              <ETLValidationGate 
+                progress={validationProgress} 
+                stepLabel={stepLabel}
+                sheetProgress={uploadType === 'county' ? sheetProgress : undefined}
+              />
             )}
 
             {stage === 'done' && ingestionResult && (
@@ -640,6 +935,12 @@ export default function ETLPipeline() {
                   <span>RAG Ready</span>
                   <span className="text-emerald-600 font-medium">Yes</span>
                 </div>
+                {uploadType === 'county' && (
+                  <div className="flex justify-between border-t border-border pt-2 mt-2">
+                    <span>County Mode</span>
+                    <span className="text-primary font-medium">Active</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
