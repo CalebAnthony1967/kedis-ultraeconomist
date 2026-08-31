@@ -462,7 +462,7 @@ export function formatRelativeTime(dateString) {
 }
 
 // ============================================================================
-// NEW CODE – County & Multi-Sheet Support (APPENDED)
+// NEW CODE – County & Multi-Sheet Support
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -470,8 +470,8 @@ export function formatRelativeTime(dateString) {
 // ---------------------------------------------------------------------------
 
 export const COUNTY_SCHEMA_FIELDS = [
-  { key: 'county_code', label: 'County Code', type: 'string', required: true },
-  { key: 'county_name', label: 'County Name', type: 'string', required: true },
+  { key: 'county_code', label: 'County Code', type: 'string', required: false },
+  { key: 'county_name', label: 'County Name', type: 'string', required: false },
   { key: 'subcounty_code', label: 'SubCounty Code', type: 'string', required: false },
   { key: 'subcounty_name', label: 'SubCounty Name', type: 'string', required: false },
   { key: 'ward_code', label: 'Ward Code', type: 'string', required: false },
@@ -482,7 +482,7 @@ export const COUNTY_SCHEMA_FIELDS = [
   { key: 'outcome', label: 'Outcome', type: 'string', required: false },
   { key: 'output_name', label: 'Output Name', type: 'string', required: false },
   { key: 'indicator_name', label: 'Indicator Name', type: 'string', required: true },
-  { key: 'unit', label: 'Unit of Measure', type: 'string', required: true },
+  { key: 'unit', label: 'Unit of Measure', type: 'string', required: false },
   { key: 'data_breakdown', label: 'Data Breakdown', type: 'string', required: false },
   { key: 'domain', label: 'Domain', type: 'string', required: false },
   { key: 'sub_domain', label: 'Sub Domain', type: 'string', required: false },
@@ -495,27 +495,27 @@ export const COUNTY_SCHEMA_FIELDS = [
 
 // County header aliases
 const COUNTY_HEADER_ALIASES = {
-  county_code: ['countycode', 'county_code', 'countycode', 'code'],
-  county_name: ['countyname', 'county_name', 'county'],
-  subcounty_code: ['subcountycode', 'subcounty_code', 'subcountycode'],
-  subcounty_name: ['subcountyname', 'subcounty_name', 'subcounty'],
-  ward_code: ['wardcode', 'ward_code', 'ward'],
-  ward_name: ['wardname', 'ward_name'],
+  county_code: ['countycode', 'county_code', 'countycode', 'code', 'county code'],
+  county_name: ['countyname', 'county_name', 'county', 'county name'],
+  subcounty_code: ['subcountycode', 'subcounty_code', 'subcountycode', 'sub county code'],
+  subcounty_name: ['subcountyname', 'subcounty_name', 'subcounty', 'sub county name'],
+  ward_code: ['wardcode', 'ward_code', 'ward', 'ward code'],
+  ward_name: ['wardname', 'ward_name', 'ward name'],
   pillar: ['pillar'],
-  mtef_sector: ['mtefsector', 'mtef_sector', 'sector'],
-  mtef_sub_sector: ['mtefsubsector', 'mtef_sub_sector', 'subsector'],
+  mtef_sector: ['mtefsector', 'mtef_sector', 'sector', 'mtef sector'],
+  mtef_sub_sector: ['mtefsubsector', 'mtef_sub_sector', 'subsector', 'mtef sub sector'],
   outcome: ['outcome'],
-  output_name: ['outputname', 'output_name', 'output'],
-  indicator_name: ['indicatorname', 'indicator_name', 'indicator', 'name'],
-  unit: ['unitofmeasure', 'unit', 'uom'],
-  data_breakdown: ['databreakdown', 'data_breakdown', 'breakdown'],
+  output_name: ['outputname', 'output_name', 'output', 'output name'],
+  indicator_name: ['indicatorname', 'indicator_name', 'indicator', 'name', 'indicator name'],
+  unit: ['unitofmeasure', 'unit', 'uom', 'unit of measure'],
+  data_breakdown: ['databreakdown', 'data_breakdown', 'breakdown', 'data breakdown'],
   domain: ['domain'],
-  sub_domain: ['subdomain', 'sub_domain'],
-  sub_domain_code: ['subdomaincode', 'sub_domain_code', 'subdomaincode'],
-  baseline_year: ['baselineyear', 'baseline_year'],
-  baseline_value: ['baselinevalue', 'baseline_value'],
-  data_source: ['datasource', 'data_source', 'source'],
-  link_to_sdg: ['linktosdg', 'link_to_sdg', 'sdg'],
+  sub_domain: ['subdomain', 'sub_domain', 'sub domain'],
+  sub_domain_code: ['subdomaincode', 'sub_domain_code', 'subdomaincode', 'sub domain code'],
+  baseline_year: ['baselineyear', 'baseline_year', 'baseline year'],
+  baseline_value: ['baselinevalue', 'baseline_value', 'baseline value'],
+  data_source: ['datasource', 'data_source', 'source', 'data source'],
+  link_to_sdg: ['linktosdg', 'link_to_sdg', 'sdg', 'link to sdg'],
 };
 
 // ---------------------------------------------------------------------------
@@ -797,7 +797,7 @@ export async function parseMultiSheetXLSX(file, applyHealing = true) {
 }
 
 // ---------------------------------------------------------------------------
-// County File Parser (Wrapper)
+// County File Parser (Wrapper) – Returns sheets grouped by name
 // ---------------------------------------------------------------------------
 
 export async function parseCountyFile(file) {
@@ -806,8 +806,35 @@ export async function parseCountyFile(file) {
     throw new Error('County data must be in XLSX format (multi-sheet workbook).');
   }
 
-  const rows = await parseMultiSheetXLSX(file, true);
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const sheets = {};
+  let allHeaders = [];
 
-  const headers = Object.keys(rows[0] || {}).filter(h => h !== '__sheet');
-  return { rows, headers };
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) continue;
+
+    const sheetRows = XLSX.utils.sheet_to_json(worksheet, {
+      defval: '',
+      raw: false,
+    });
+
+    if (sheetRows.length === 0) continue;
+
+    // Apply silo-healing per sheet
+    const healedRows = applySiloHealing(sheetRows, 4);
+    sheets[sheetName] = healedRows;
+
+    // Capture headers from the first non-empty sheet
+    if (allHeaders.length === 0 && healedRows.length > 0) {
+      allHeaders = Object.keys(healedRows[0]);
+    }
+  }
+
+  if (Object.keys(sheets).length === 0) {
+    throw new Error('No data found in any sheet.');
+  }
+
+  return { sheets, headers: allHeaders };
 }
