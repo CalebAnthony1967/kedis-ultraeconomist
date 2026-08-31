@@ -1,10 +1,12 @@
-﻿
 /**
  * ============================================================================
  * KEDIS UltraEconomist — ETL Utilities
  * ============================================================================
  * File parsing, silo-healing, data contract validation, SHA-256 hashing,
  * header auto-mapping, FAIR scoring, and session persistence.
+ *
+ * Enhanced for: Multi-sheet county ingestion (47 sheets), per-sheet silo-healing,
+ * domain/subdomain auto-creation, and county-specific schema.
  * ============================================================================
  */
 
@@ -150,7 +152,7 @@ export function parseJSONText(text) {
 }
 
 /**
- * Parse XLSX using Base44 ExtractDataFromUploadedFile integration
+ * Parse XLSX using XLSX library (multi-sheet support)
  */
 async function parseXLSX(file) {
   const buffer = await file.arrayBuffer();
@@ -178,7 +180,7 @@ async function parseXLSX(file) {
     throw new Error('Failed to extract data from XLSX file');
   }
 
-    const output = rows;
+  const output = rows;
 
   if (Array.isArray(output)) return output;
   if (output?.rows && Array.isArray(output.rows)) return output.rows;
@@ -457,4 +459,355 @@ export function formatRelativeTime(dateString) {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// ============================================================================
+// NEW CODE – County & Multi-Sheet Support (APPENDED)
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// County Schema
+// ---------------------------------------------------------------------------
+
+export const COUNTY_SCHEMA_FIELDS = [
+  { key: 'county_code', label: 'County Code', type: 'string', required: true },
+  { key: 'county_name', label: 'County Name', type: 'string', required: true },
+  { key: 'subcounty_code', label: 'SubCounty Code', type: 'string', required: false },
+  { key: 'subcounty_name', label: 'SubCounty Name', type: 'string', required: false },
+  { key: 'ward_code', label: 'Ward Code', type: 'string', required: false },
+  { key: 'ward_name', label: 'Ward Name', type: 'string', required: false },
+  { key: 'pillar', label: 'Pillar', type: 'string', required: false },
+  { key: 'mtef_sector', label: 'MTEF Sector', type: 'string', required: false },
+  { key: 'mtef_sub_sector', label: 'MTEF Sub-Sector', type: 'string', required: false },
+  { key: 'outcome', label: 'Outcome', type: 'string', required: false },
+  { key: 'output_name', label: 'Output Name', type: 'string', required: false },
+  { key: 'indicator_name', label: 'Indicator Name', type: 'string', required: true },
+  { key: 'unit', label: 'Unit of Measure', type: 'string', required: true },
+  { key: 'data_breakdown', label: 'Data Breakdown', type: 'string', required: false },
+  { key: 'domain', label: 'Domain', type: 'string', required: false },
+  { key: 'sub_domain', label: 'Sub Domain', type: 'string', required: false },
+  { key: 'sub_domain_code', label: 'Sub Domain Code', type: 'string', required: false },
+  { key: 'baseline_year', label: 'Baseline Year', type: 'integer', required: false },
+  { key: 'baseline_value', label: 'Baseline Value', type: 'number', required: false },
+  { key: 'data_source', label: 'Data Source', type: 'string', required: false },
+  { key: 'link_to_sdg', label: 'Link to SDG', type: 'string', required: false },
+];
+
+// County header aliases
+const COUNTY_HEADER_ALIASES = {
+  county_code: ['countycode', 'county_code', 'countycode', 'code'],
+  county_name: ['countyname', 'county_name', 'county'],
+  subcounty_code: ['subcountycode', 'subcounty_code', 'subcountycode'],
+  subcounty_name: ['subcountyname', 'subcounty_name', 'subcounty'],
+  ward_code: ['wardcode', 'ward_code', 'ward'],
+  ward_name: ['wardname', 'ward_name'],
+  pillar: ['pillar'],
+  mtef_sector: ['mtefsector', 'mtef_sector', 'sector'],
+  mtef_sub_sector: ['mtefsubsector', 'mtef_sub_sector', 'subsector'],
+  outcome: ['outcome'],
+  output_name: ['outputname', 'output_name', 'output'],
+  indicator_name: ['indicatorname', 'indicator_name', 'indicator', 'name'],
+  unit: ['unitofmeasure', 'unit', 'uom'],
+  data_breakdown: ['databreakdown', 'data_breakdown', 'breakdown'],
+  domain: ['domain'],
+  sub_domain: ['subdomain', 'sub_domain'],
+  sub_domain_code: ['subdomaincode', 'sub_domain_code', 'subdomaincode'],
+  baseline_year: ['baselineyear', 'baseline_year'],
+  baseline_value: ['baselinevalue', 'baseline_value'],
+  data_source: ['datasource', 'data_source', 'source'],
+  link_to_sdg: ['linktosdg', 'link_to_sdg', 'sdg'],
+};
+
+// ---------------------------------------------------------------------------
+// Auto-Mapping for County
+// ---------------------------------------------------------------------------
+
+export function autoSuggestMappingCounty(headers) {
+  const mapping = {};
+  const usedTargets = new Set();
+
+  for (const header of headers) {
+    const normalized = normalizeHeader(header);
+    let bestMatch = null;
+
+    for (const [target, aliases] of Object.entries(COUNTY_HEADER_ALIASES)) {
+      if (usedTargets.has(target)) continue;
+      if (aliases.includes(normalized)) {
+        bestMatch = target;
+        break;
+      }
+      for (const alias of aliases) {
+        if (normalized === alias || (normalized.length > 3 && (normalized.includes(alias) || alias.includes(normalized)))) {
+          bestMatch = target;
+          break;
+        }
+      }
+      if (bestMatch) break;
+    }
+
+    if (!bestMatch && /^\d{4}$/.test(header)) {
+      bestMatch = ''; // Year columns are handled separately
+    }
+
+    mapping[header] = bestMatch || '';
+    if (bestMatch) usedTargets.add(bestMatch);
+  }
+
+  return mapping;
+}
+
+// ---------------------------------------------------------------------------
+// Detect Data Format
+// ---------------------------------------------------------------------------
+
+export function detectDataFormat(headers) {
+  const countyIndicators = ['county_code', 'county_name', 'subcounty_code', 'ward_code'];
+  const lowerHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const isCounty = countyIndicators.some(col => lowerHeaders.includes(col));
+  return isCounty ? 'county' : 'national';
+}
+
+// ---------------------------------------------------------------------------
+// County-Specific Validation
+// ---------------------------------------------------------------------------
+
+export function validateCountyRow(row, mapping, defaults = {}) {
+  const record = {};
+  const errors = [];
+
+  for (const [sourceHeader, targetField] of Object.entries(mapping)) {
+    if (!targetField || row[sourceHeader] === undefined) continue;
+
+    const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
+    if (!fieldDef) continue;
+
+    let value = row[sourceHeader];
+    if (fieldDef.type === 'integer') {
+      value = Math.round(normalizeMagnitude(value));
+    } else if (fieldDef.type === 'number') {
+      value = normalizeMagnitude(value);
+    } else {
+      value = String(value).trim();
+    }
+    record[targetField] = value;
+  }
+
+  for (const [key, value] of Object.entries(defaults)) {
+    if (value !== undefined && value !== null && value !== '' &&
+        (record[key] === undefined || record[key] === null || record[key] === '')) {
+      record[key] = value;
+    }
+  }
+
+  const requiredFields = COUNTY_SCHEMA_FIELDS.filter(f => f.required);
+  for (const field of requiredFields) {
+    const val = record[field.key];
+    if (val === undefined || val === null || val === '') {
+      errors.push(`Missing required field: ${field.label}`);
+    }
+  }
+
+  if (record.county_code && !/^\d{3}$/.test(record.county_code)) {
+    errors.push(`Invalid county_code format: ${record.county_code}. Expected 3 digits (e.g., '047').`);
+  }
+
+  return { valid: errors.length === 0, record, errors };
+}
+
+// ---------------------------------------------------------------------------
+// County Row Transformation (Expands Years)
+// ---------------------------------------------------------------------------
+
+export async function transformCountyRow(row, mapping, defaults = {}, domainResolver) {
+  const baseRecord = {};
+  for (const [sourceHeader, targetField] of Object.entries(mapping)) {
+    if (!targetField || row[sourceHeader] === undefined) continue;
+    const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
+    if (!fieldDef) continue;
+    let value = row[sourceHeader];
+    if (fieldDef.type === 'integer') {
+      value = Math.round(normalizeMagnitude(value));
+    } else if (fieldDef.type === 'number') {
+      value = normalizeMagnitude(value);
+    } else {
+      value = String(value).trim();
+    }
+    baseRecord[targetField] = value;
+  }
+
+  for (const [key, value] of Object.entries(defaults)) {
+    if (value !== undefined && value !== null && value !== '' &&
+        (baseRecord[key] === undefined || baseRecord[key] === null || baseRecord[key] === '')) {
+      baseRecord[key] = value;
+    }
+  }
+
+  let subdomainId = null;
+  if (baseRecord.sub_domain_code && domainResolver) {
+    try {
+      subdomainId = await domainResolver(
+        baseRecord.domain,
+        baseRecord.sub_domain_code,
+        baseRecord.sub_domain
+      );
+    } catch (e) {
+      console.warn('Domain lookup failed:', e);
+    }
+  }
+
+  const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h));
+  const records = [];
+
+  for (const yearKey of yearColumns) {
+    const year = parseInt(yearKey, 10);
+    const rawValue = row[yearKey];
+    if (rawValue === undefined || rawValue === null || rawValue === '') continue;
+
+    const value = normalizeMagnitude(rawValue);
+    if (isNaN(value)) continue;
+
+    const record = {
+      ...baseRecord,
+      year,
+      value,
+      subdomain_id: subdomainId,
+    };
+
+    delete record.domain;
+    delete record.sub_domain;
+    delete record.sub_domain_code;
+
+    records.push(record);
+  }
+
+  return records;
+}
+
+// ---------------------------------------------------------------------------
+// Domain/Subdomain Auto-Creation Helper
+// ---------------------------------------------------------------------------
+
+export async function getOrCreateDomainSubdomain(supabaseClient, domainName, subdomainCode, subdomainName) {
+  if (!subdomainCode) return null;
+
+  try {
+    const { data: existingSub, error: subError } = await supabaseClient
+      .from('subdomains')
+      .select('id, domain_id')
+      .eq('code', subdomainCode)
+      .maybeSingle();
+
+    if (subError) {
+      console.warn('Error fetching subdomain:', subError);
+      return null;
+    }
+
+    if (existingSub) return existingSub.id;
+
+    let domainId = null;
+    if (domainName) {
+      const { data: existingDomain, error: domError } = await supabaseClient
+        .from('domains')
+        .select('id')
+        .eq('name', domainName)
+        .maybeSingle();
+
+      if (domError) {
+        console.warn('Error fetching domain:', domError);
+        return null;
+      }
+
+      if (existingDomain) {
+        domainId = existingDomain.id;
+      } else {
+        const { data: newDomain, error: createDomError } = await supabaseClient
+          .from('domains')
+          .insert({ name: domainName, code: `custom-${Date.now()}` })
+          .select('id')
+          .single();
+
+        if (createDomError) {
+          console.warn('Error creating domain:', createDomError);
+          return null;
+        }
+        domainId = newDomain.id;
+      }
+    }
+
+    const { data: newSub, error: createSubError } = await supabaseClient
+      .from('subdomains')
+      .insert({
+        code: subdomainCode,
+        name: subdomainName || subdomainCode,
+        domain_id: domainId,
+      })
+      .select('id')
+      .single();
+
+    if (createSubError) {
+      console.warn('Error creating subdomain:', createSubError);
+      return null;
+    }
+
+    return newSub.id;
+  } catch (e) {
+    console.warn('Domain/subdomain resolution failed:', e);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-Sheet XLSX Parser
+// ---------------------------------------------------------------------------
+
+export async function parseMultiSheetXLSX(file, applyHealing = true) {
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const allRows = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) continue;
+
+    const sheetRows = XLSX.utils.sheet_to_json(worksheet, {
+      defval: '',
+      raw: false,
+    });
+
+    if (sheetRows.length === 0) continue;
+
+    const rowsWithSheet = sheetRows.map(row => ({
+      ...row,
+      __sheet: sheetName,
+    }));
+
+    if (applyHealing) {
+      const healedRows = applySiloHealing(rowsWithSheet, 4);
+      allRows.push(...healedRows);
+    } else {
+      allRows.push(...rowsWithSheet);
+    }
+  }
+
+  if (allRows.length === 0) {
+    throw new Error('No data found in any sheet.');
+  }
+
+  return allRows;
+}
+
+// ---------------------------------------------------------------------------
+// County File Parser (Wrapper)
+// ---------------------------------------------------------------------------
+
+export async function parseCountyFile(file) {
+  const ext = file.name.split('.').pop().toUpperCase();
+  if (ext !== 'XLSX') {
+    throw new Error('County data must be in XLSX format (multi-sheet workbook).');
+  }
+
+  const rows = await parseMultiSheetXLSX(file, true);
+
+  const headers = Object.keys(rows[0] || {}).filter(h => h !== '__sheet');
+  return { rows, headers };
 }
