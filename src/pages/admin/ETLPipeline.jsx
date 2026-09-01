@@ -589,14 +589,17 @@ export default function ETLPipeline() {
           }
         }
 
-        for (const row of sheetRows) {
-          const result = validateCountyRow(row, mapping, defaults);
-          if (result.valid) {
-            allValidRecords.push(result.record);
-          } else {
-            allErrors.push({ sheet: sheetName, errors: result.errors });
-          }
-        }
+           for (const row of sheetRows) {
+  console.log('Row being validated:', row);
+  console.log('Mapping being used:', mapping);
+  const result = validateCountyRow(row, mapping, defaults);
+  console.log('Validation result:', result);
+  if (result.valid) {
+    allValidRecords.push(result.record);
+  } else {
+    allErrors.push({ sheet: sheetName, errors: result.errors });
+  }
+}
 
         await new Promise(r => setTimeout(r, 50));
       }
