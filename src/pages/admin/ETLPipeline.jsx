@@ -557,7 +557,7 @@ export default function ETLPipeline() {
       }
 
       // ============================================================
-      // BRANCH 2: COUNTY DATA – STRICT COLUMN ALIGNMENT
+      // BRANCH 2: COUNTY DATA – FIXED WITH PROPER COLUMN MAPPING
       // ============================================================
       if (Object.keys(rawRowsBySheet).length === 0) {
         toast({
@@ -570,110 +570,7 @@ export default function ETLPipeline() {
         return;
       }
 
-      const sheetsToProcess = Object.entries(rawRowsBySheet);
-      const totalSheets = sheetsToProcess.length;
-
-      console.log(`📊 Processing ${totalSheets} county sheets...`);
-      console.log('📋 County Mapping:', mapping);
-
-      // Process each sheet
-      for (let sIdx = 0; sIdx < totalSheets; sIdx++) {
-        const [sheetName, rows] = sheetsToProcess[sIdx];
-        setStepLabel(`Healing & Syncing: ${sheetName} (${sIdx + 1}/${totalSheets})...`);
-        setValidationProgress(Math.round((sIdx / totalSheets) * 40));
-
-        // Apply Silo-Healing (Forward-Fill) to recover merged headers
-        const healedRows = applySiloHealing(rows, 6);
-        const validBatch = [];
-
-        for (let row of healedRows) {
-          try {
-            // Auto-tag County Code from sheet name if 3-digits (e.g. "026")
-            const sheetCode = sheetName.match(/^(\d{3})/);
-            const countyCode = sheetCode ? sheetCode[1] : (row.County_Code || row.county_code || '');
-
-            // Find Indicator Name from mapping
-            const indicatorNameKey = Object.keys(mapping).find(k => 
-              mapping[k] === 'indicator_name' || mapping[k] === 'name'
-            );
-            const indicatorName = indicatorNameKey ? String(row[indicatorNameKey] || '').trim() : '';
-            
-            if (!indicatorName) continue;
-
-            // Build base metadata with strict column mapping
-            const baseRecord = {
-              created_by: user.id,
-              source_mcda: sourceMCDA || 'County Government',
-              county_code: countyCode,
-              county_name: row.County_Name || row.county_name || '',
-              subcounty_code: row.SubCounty_Code || row.subcounty_code || '',
-              subcounty_name: row.SubCounty_Name || row.subcounty_name || '',
-              ward_code: row.Ward_Code || row.ward_code || '',
-              ward_name: row.Ward_Name || row.ward_name || '',
-              name: indicatorName,
-              is_verified: true,
-              entity_level: countyCode ? 'County' : 'National',
-            };
-
-            // Map other metadata fields from the mapping
-            Object.entries(mapping).forEach(([sourceHeader, targetField]) => {
-              if (!targetField || ['indicator_name', 'name', 'year', 'value'].includes(targetField)) return;
-              const value = row[sourceHeader] !== undefined ? String(row[sourceHeader] || '').trim() : '';
-              baseRecord[targetField] = value;
-            });
-
-            // --- WIDE-TO-LONG TRANSFORMATION ---
-            // Identify columns that look like years (2013-2030)
-            const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h.trim()));
-            
-            for (const yearKey of yearColumns) {
-              const val = sanitizeValue(row[yearKey]);
-              if (val === null) continue;
-
-              const year = parseInt(yearKey.trim(), 10);
-              
-              // Generate a Sovereign Persistent Identifier (SPI) for uniqueness
-              const spi = `${indicatorName.substring(0, 15).replace(/\s+/g, '_').toUpperCase()}_${countyCode || 'KE'}_${year}`;
-
-              validBatch.push({
-                ...baseRecord,
-                indicator_id_spi: spi,
-                year: year,
-                value: val,
-              });
-            }
-          } catch (rowErr) {
-            console.warn('Row processing error:', rowErr);
-            globalAnomalies.push({ sheet: sheetName, error: "Row transformation failed" });
-          }
-        }
-
-        // Batch Atomic Upsert
-        if (validBatch.length > 0) {
-          for (let i = 0; i < validBatch.length; i += 500) {
-            const chunk = validBatch.slice(i, i + 500);
-            const { error: upsertError } = await supabase
-              .from('indicators')
-              .upsert(chunk, { onConflict: 'indicator_id_spi' });
-
-            if (upsertError) {
-              console.error(`Silo Sync Error [${sheetName}]:`, upsertError);
-              globalAnomalies.push({ sheet: sheetName, error: upsertError.message });
-            } else {
-              globalInserted += chunk.length;
-              console.log(`✅ Inserted ${chunk.length} records from ${sheetName}`);
-            }
-          }
-        } else {
-          console.warn(`⚠️ No valid records found in sheet: ${sheetName}`);
-          globalAnomalies.push({ sheet: sheetName, error: 'No valid records found' });
-        }
-
-        setValidationProgress(40 + Math.round(((sIdx + 1) / totalSheets) * 60));
-        await new Promise(r => setTimeout(r, 50));
-      }
-
-      // Finalize Job with Anomaly Reporting
+      // Create ingestion job first to track progress
       const { data: job, error: jobError } = await supabase
         .from('data_ingestion_jobs')
         .insert({
@@ -681,10 +578,10 @@ export default function ETLPipeline() {
           file_type: fileMetadata?.file_type || 'XLSX',
           source_mcda: sourceMCDA || 'County Government',
           upload_type: 'county',
-          status: globalInserted > 0 ? (globalAnomalies.length > 0 ? 'anomaly' : 'ingested') : 'failed',
-          records_ingested: globalInserted,
-          total_sheets: totalSheets,
-          validation_errors: globalAnomalies.length > 0 ? JSON.stringify(globalAnomalies.slice(0, 20)) : null,
+          total_sheets: Object.keys(rawRowsBySheet).length,
+          processed_sheets: 0,
+          status: 'pending',
+          records_ingested: 0,
           sha256_hash: fileMetadata?.sha256_hash || '',
           created_by: user.id,
         })
@@ -692,9 +589,199 @@ export default function ETLPipeline() {
         .single();
 
       if (jobError) {
-        console.error('Job creation error:', jobError);
-        globalAnomalies.push({ sheet: 'System', error: jobError.message });
+        console.error('❌ Job creation error:', jobError);
+        toast({
+          title: 'Job creation failed',
+          description: jobError.message,
+          variant: 'destructive',
+        });
+        setStage('preview');
+        return;
       }
+
+      console.log(`✅ Job created: ${job.id}`);
+
+      const sheetsToProcess = Object.entries(rawRowsBySheet);
+      const totalSheets = sheetsToProcess.length;
+
+      console.log(`📊 Processing ${totalSheets} county sheets...`);
+
+      // Process each sheet
+      for (let sIdx = 0; sIdx < totalSheets; sIdx++) {
+        const [sheetName, rows] = sheetsToProcess[sIdx];
+        setStepLabel(`Healing & Syncing: ${sheetName} (${sIdx + 1}/${totalSheets})...`);
+        setValidationProgress(Math.round((sIdx / totalSheets) * 40));
+
+        try {
+          // Apply Silo-Healing (Forward-Fill) to recover merged headers
+          const healedRows = applySiloHealing(rows, 6);
+          const validBatch = [];
+
+          for (let row of healedRows) {
+            try {
+              // Auto-tag County Code from sheet name if 3-digits (e.g. "026")
+              const sheetCode = sheetName.match(/^(\d{3})/);
+              const countyCode = sheetCode ? sheetCode[1] : (row.County_Code || row.county_code || '');
+
+              // Find Indicator Name from mapping
+              const indicatorNameKey = Object.keys(mapping).find(k => 
+                mapping[k] === 'indicator_name' || mapping[k] === 'name'
+              );
+              const indicatorName = indicatorNameKey ? String(row[indicatorNameKey] || '').trim() : '';
+              
+              if (!indicatorName) continue;
+
+              // Build base record - DO NOT include 'domain' or 'sub_domain' as they don't exist in DB
+              const baseRecord = {
+                created_by: user.id,
+                source_mcda: sourceMCDA || 'County Government',
+                county_code: countyCode,
+                county_name: row.County_Name || row.county_name || '',
+                subcounty_code: row.SubCounty_Code || row.subcounty_code || '',
+                subcounty_name: row.SubCounty_Name || row.subcounty_name || '',
+                ward_code: row.Ward_Code || row.ward_code || '',
+                ward_name: row.Ward_Name || row.ward_name || '',
+                name: indicatorName,
+                is_verified: true,
+                entity_level: countyCode ? 'County' : 'National',
+                indicator_id: indicatorName.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 50) + '_' + (countyCode || '000'),
+              };
+
+              // Map other metadata fields - SKIP 'domain' and 'sub_domain' (not DB columns)
+              Object.entries(mapping).forEach(([sourceHeader, targetField]) => {
+                if (!targetField) return;
+                // Skip fields that are not database columns
+                const skipFields = ['indicator_name', 'name', 'year', 'value', 'domain', 'sub_domain', 'sub_domain_code'];
+                if (skipFields.includes(targetField)) return;
+                
+                const value = row[sourceHeader] !== undefined ? String(row[sourceHeader] || '').trim() : '';
+                baseRecord[targetField] = value;
+              });
+
+              // Look up subdomain_id from sub_domain_code
+              const subDomainCodeKey = Object.keys(mapping).find(k => mapping[k] === 'sub_domain_code');
+              const subDomainCode = subDomainCodeKey ? String(row[subDomainCodeKey] || '').trim() : '';
+              
+              let subdomainId = null;
+              if (subDomainCode) {
+                try {
+                  // Try to find existing subdomain
+                  const { data: subData, error: subError } = await supabase
+                    .from('subdomains')
+                    .select('id')
+                    .eq('code', subDomainCode)
+                    .maybeSingle();
+                  
+                  if (!subError && subData) {
+                    subdomainId = subData.id;
+                  } else {
+                    // Try to create it
+                    const domainNameKey = Object.keys(mapping).find(k => mapping[k] === 'domain');
+                    const domainName = domainNameKey ? String(row[domainNameKey] || '').trim() : '';
+                    const subDomainNameKey = Object.keys(mapping).find(k => mapping[k] === 'sub_domain');
+                    const subDomainName = subDomainNameKey ? String(row[subDomainNameKey] || '').trim() : '';
+                    
+                    subdomainId = await getOrCreateDomainSubdomain(
+                      supabase,
+                      domainName,
+                      subDomainCode,
+                      subDomainName || subDomainCode
+                    );
+                  }
+                } catch (e) {
+                  console.warn('Subdomain lookup failed:', e);
+                }
+              }
+
+              // Wide-to-long transformation
+              const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h.trim()));
+              
+              for (const yearKey of yearColumns) {
+                const val = sanitizeValue(row[yearKey]);
+                if (val === null) continue;
+
+                const year = parseInt(yearKey.trim(), 10);
+                
+                // Generate SPI for uniqueness
+                const spi = `${indicatorName.substring(0, 15).replace(/\s+/g, '_').toUpperCase()}_${countyCode || 'KE'}_${year}`;
+
+                const record = {
+                  ...baseRecord,
+                  indicator_id_spi: spi,
+                  year: year,
+                  value: val,
+                };
+
+                // Only add subdomain_id if we found one
+                if (subdomainId) {
+                  record.subdomain_id = subdomainId;
+                }
+
+                validBatch.push(record);
+              }
+            } catch (rowErr) {
+              console.warn('Row processing error:', rowErr);
+              globalAnomalies.push({ sheet: sheetName, error: "Row transformation failed" });
+            }
+          }
+
+          // Batch upsert with error handling
+          if (validBatch.length > 0) {
+            for (let i = 0; i < validBatch.length; i += 500) {
+              const chunk = validBatch.slice(i, i + 500);
+              const { data, error: upsertError } = await supabase
+                .from('indicators')
+                .upsert(chunk, { onConflict: 'indicator_id_spi' });
+
+              if (upsertError) {
+                console.error(`❌ Sheet ${sheetName} upsert error:`, upsertError);
+                console.error('❌ Sample record:', chunk[0]);
+                globalAnomalies.push({ sheet: sheetName, error: upsertError.message });
+              } else {
+                globalInserted += chunk.length;
+                console.log(`✅ Inserted ${chunk.length} records from ${sheetName}`);
+              }
+            }
+          } else {
+            console.warn(`⚠️ No valid records in sheet: ${sheetName}`);
+            globalAnomalies.push({ sheet: sheetName, error: 'No valid records found' });
+          }
+
+          // Update job progress
+          await supabase
+            .from('data_ingestion_jobs')
+            .update({
+              processed_sheets: sIdx + 1,
+              records_ingested: globalInserted,
+            })
+            .eq('id', job.id);
+
+        } catch (sheetErr) {
+          console.error(`❌ Sheet ${sheetName} processing error:`, sheetErr);
+          globalAnomalies.push({ sheet: sheetName, error: sheetErr.message });
+        }
+
+        setValidationProgress(40 + Math.round(((sIdx + 1) / totalSheets) * 60));
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      // Finalize job status
+      const finalStatus = globalInserted > 0 ? (globalAnomalies.length > 0 ? 'anomaly' : 'ingested') : 'failed';
+      await supabase
+        .from('data_ingestion_jobs')
+        .update({
+          status: finalStatus,
+          records_ingested: globalInserted,
+          processed_sheets: totalSheets,
+          validation_errors: globalAnomalies.length > 0 ? JSON.stringify(globalAnomalies.slice(0, 20)) : null,
+        })
+        .eq('id', job.id);
+
+      console.log('📊 Final Summary:', {
+        globalInserted,
+        anomalies: globalAnomalies.length,
+        status: finalStatus,
+      });
 
       // Audit log
       await supabase.from('audit_logs').insert({
@@ -702,7 +789,7 @@ export default function ETLPipeline() {
         user_email: user.email,
         user_role: user.portal_role,
         target_entity: 'indicators',
-        target_id: job?.id || null,
+        target_id: job?.id,
         details: `Sovereign Sync: ${globalInserted} county records from ${totalSheets} sheets. ${globalAnomalies.length} anomalies.`,
         sha256_hash: fileMetadata?.sha256_hash || '',
       });
