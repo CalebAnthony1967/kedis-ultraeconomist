@@ -1,14 +1,11 @@
 /**
  * ============================================================================
- * KEDIS UltraEconomist — ETL Utilities (v14.0 - Ultra-Resilient)
+ * KEDIS UltraEconomist — ETL Utilities (v15.0 - Strict Column Alignment)
  * ============================================================================
  * File parsing, silo-healing, data contract validation, SHA-256 hashing,
  * header auto-mapping, FAIR scoring, and session persistence.
  *
- * Enhanced for: Fail-proof multi-sheet county ingestion, per-sheet silo-healing,
- * domain/subdomain auto-creation, and intelligent column mapping.
- * 
- * SOVEREIGN RESILIENCE: Handles human markers (..., -, n/a, etc.) gracefully.
+ * Enhanced for: Strict alignment with KIPPRA county dataset column names.
  * ============================================================================
  */
 
@@ -204,57 +201,25 @@ export async function parseFile(file) {
   return applySiloHealing(rows);
 }
 
-// ============================================================================
-// SOVEREIGN RESILIENT FUNCTIONS (v14.0 - Fail-Proof)
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Silo-Healing Engine
+// ---------------------------------------------------------------------------
 
-/**
- * --- FAIL-PROOF NUMERIC SANITIZER ---
- * Recognizes human markers used in Kenyan MCDA data and prevents validation crashes.
- * Returns null for markers, allowing the row to remain valid.
- */
-export function normalizeMagnitude(value) {
-  if (value === null || value === undefined || value === '') return null;
-  let str = String(value).trim().toLowerCase();
-  
-  // High-End Marker Recognition: Treat these as "Valid Nulls" instead of NaN
-  const markers = ['...', '-', 'n/a', 'nil', 'tbd', 'none', 'nan', 'pending', 'unknown', 'not available'];
-  if (markers.includes(str)) return null;
-
-  str = str.replace(/[KES|USD|$|,|%]/gi, ''); // Strip symbols
-  const match = str.match(/^(-?\d+\.?\d*)\s*([KMBT]?)/i);
-  if (!match) return null; // Return null instead of NaN to keep row valid
-  
-  let num = parseFloat(match[1]);
-  const suffix = (match[2] || '').toUpperCase();
-  if (suffix === 'K') num *= 1e3;
-  else if (suffix === 'M') num *= 1e6;
-  else if (suffix === 'B') num *= 1e9;
-  else if (suffix === 'T') num *= 1e12;
-  return num;
-}
-
-/**
- * --- RECURSIVE SILO HEALING (v14) ---
- * Heals merged Excel headers (Forward-fill) while handling deep hierarchies.
- * Uses a Contextual Memory Buffer that resets per sheet.
- */
 export function applySiloHealing(rows, fillColumns = 6) {
   if (!rows || rows.length === 0) return rows || [];
   const headers = Object.keys(rows[0]);
   const fillHeaders = headers.slice(0, Math.min(fillColumns, headers.length));
   
   const healed = rows.map(r => ({ ...r }));
-  // Buffer to remember last seen values per sheet
   let lastSeen = {};
 
   for (let i = 0; i < healed.length; i++) {
     for (const header of fillHeaders) {
       const val = healed[i][header];
       if (val !== undefined && val !== null && String(val).trim() !== '') {
-        lastSeen[header] = val; // Update memory
+        lastSeen[header] = val;
       } else if (lastSeen[header] !== undefined) {
-        healed[i][header] = lastSeen[header]; // Inject memory
+        healed[i][header] = lastSeen[header];
       }
     }
   }
@@ -453,7 +418,7 @@ export function formatRelativeTime(dateString) {
 }
 
 // ============================================================================
-// COUNTY & MULTI-SHEET SUPPORT (FULLY AUTOMATIC)
+// COUNTY & MULTI-SHEET SUPPORT (STRICT COLUMN ALIGNMENT)
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -485,48 +450,47 @@ export const COUNTY_SCHEMA_FIELDS = [
   { key: 'link_to_sdg', label: 'Link to SDG', type: 'string', required: false },
 ];
 
-// ---------------------------------------------------------------------------
-// Enhanced County Header Aliases – Complete Mapping
-// ---------------------------------------------------------------------------
+// ============================================================================
+// STRICT COUNTY HEADER ALIASES – Exact match for your column names
+// ============================================================================
 
 const COUNTY_HEADER_ALIASES = {
-  // Geography
-  county_code: ['countycode', 'county_code', 'countycode', 'code', 'county code', 'countycode', 'countycode'],
-  county_name: ['countyname', 'county_name', 'county', 'county name', 'countyname', 'countyname'],
-  subcounty_code: ['subcountycode', 'subcounty_code', 'subcountycode', 'sub county code', 'subcountycode', 'subcountycode'],
-  subcounty_name: ['subcountyname', 'subcounty_name', 'subcounty', 'sub county name', 'subcountyname'],
-  ward_code: ['wardcode', 'ward_code', 'ward', 'ward code', 'wardcode'],
-  ward_name: ['wardname', 'ward_name', 'ward name', 'wardname'],
+  // Geography – Exact match from your dataset
+  county_code: ['County_Code', 'CountyCode', 'county_code', 'countycode', 'County Code', 'county code'],
+  county_name: ['County_Name', 'CountyName', 'county_name', 'countyname', 'County Name', 'county name'],
+  subcounty_code: ['SubCounty_Code', 'SubCountyCode', 'subcounty_code', 'subcountycode', 'SubCounty Code', 'subcounty code'],
+  subcounty_name: ['SubCounty_Name', 'SubCountyName', 'subcounty_name', 'subcountyname', 'SubCounty Name', 'subcounty name'],
+  ward_code: ['Ward_Code', 'WardCode', 'ward_code', 'wardcode', 'Ward Code', 'ward code'],
+  ward_name: ['Ward_Name', 'WardName', 'ward_name', 'wardname', 'Ward Name', 'ward name'],
   
-  // Policy Taxonomy
-  pillar: ['pillar'],
-  mtef_sector: ['mtefsector', 'mtef_sector', 'sector', 'mtef sector', 'mtf sector'],
-  mtef_sub_sector: ['mtefsubsector', 'mtef_sub_sector', 'subsector', 'mtef sub sector'],
-  outcome: ['outcome'],
-  output_name: ['outputname', 'output_name', 'output', 'output name'],
+  // Policy Taxonomy – Exact match
+  pillar: ['Pillar', 'pillar', 'PILLAR'],
+  mtef_sector: ['MTEF_Sector', 'MTEFSector', 'mtef_sector', 'mtefsector', 'MTEF Sector', 'sector'],
+  mtef_sub_sector: ['MTEF_Sub_Sector', 'MTEFSubSector', 'mtef_sub_sector', 'mtefsubsector', 'MTEF Sub Sector', 'subsector'],
+  outcome: ['Outcome', 'outcome', 'OUTCOME'],
+  output_name: ['Output_Name', 'OutputName', 'output_name', 'outputname', 'Output Name', 'output name'],
   
-  // Core Indicator
-  indicator_name: ['indicatorname', 'indicator_name', 'indicator', 'name', 'indicator name', 'indicatorname'],
-  indicator_description: ['description', 'indicator_description', 'definition'],
-  unit: ['unitofmeasure', 'unit', 'uom', 'unit of measure', 'measure', 'unitofmeasure'],
-  data_breakdown: ['databreakdown', 'data_breakdown', 'breakdown', 'data breakdown', 'breakdown'],
+  // Core Indicator – Exact match
+  indicator_name: ['Indicator_Name', 'IndicatorName', 'indicator_name', 'indicatorname', 'Indicator Name', 'indicator name', 'Indicator'],
+  unit: ['Unit_of_Measure', 'UnitOfMeasure', 'unit_of_measure', 'unitofmeasure', 'Unit of Measure', 'unit', 'Unit'],
+  data_breakdown: ['Data_Breakdown', 'DataBreakdown', 'data_breakdown', 'databreakdown', 'Data Breakdown', 'breakdown'],
   
-  // Domain Classification
-  domain: ['domain'],
-  sub_domain: ['subdomain', 'sub_domain', 'sub domain'],
-  sub_domain_code: ['subdomaincode', 'sub_domain_code', 'subdomaincode', 'sub domain code'],
+  // Domain Classification – Exact match
+  domain: ['Domain', 'domain', 'DOMAIN'],
+  sub_domain: ['Sub_domain', 'Subdomain', 'sub_domain', 'subdomain', 'Sub Domain', 'sub domain'],
+  sub_domain_code: ['Sub_domain_Code', 'SubdomainCode', 'sub_domain_code', 'subdomaincode', 'Sub Domain Code', 'sub domain code'],
   
-  // Time Series
-  baseline_year: ['baselineyear', 'baseline_year', 'baseline year'],
-  baseline_value: ['baselinevalue', 'baseline_value', 'baseline value'],
+  // Time Series – Exact match
+  baseline_year: ['Baseline_Year', 'BaselineYear', 'baseline_year', 'baselineyear', 'Baseline Year', 'baseline year'],
+  baseline_value: ['Baseline_Value', 'BaselineValue', 'baseline_value', 'baselinevalue', 'Baseline Value', 'baseline value'],
   
-  // Metadata
-  data_source: ['datasource', 'data_source', 'source', 'data source'],
-  link_to_sdg: ['linktosdg', 'link_to_sdg', 'sdg', 'link to sdg'],
+  // Metadata – Exact match
+  data_source: ['Data_Source', 'DataSource', 'data_source', 'datasource', 'Data Source', 'data source', 'Source'],
+  link_to_sdg: ['Link_to_SDG', 'LinkToSDG', 'link_to_sdg', 'linktosdg', 'Link to SDG', 'sdg', 'SDG'],
 };
 
 // ---------------------------------------------------------------------------
-// Auto-Mapping for County – Fully Automatic
+// Auto-Mapping for County – Strict alignment
 // ---------------------------------------------------------------------------
 
 export function autoSuggestMappingCounty(headers) {
@@ -535,52 +499,82 @@ export function autoSuggestMappingCounty(headers) {
 
   if (!headers || headers.length === 0) return mapping;
 
+  console.log('🔍 County Auto-Mapping - Headers:', headers);
+
   for (const header of headers) {
-    const normalized = normalizeHeader(header);
+    const trimmedHeader = header.trim();
     let bestMatch = null;
     let matchScore = 0;
 
     for (const [target, aliases] of Object.entries(COUNTY_HEADER_ALIASES)) {
       if (usedTargets.has(target)) continue;
       
+      // Check each alias
       for (const alias of aliases) {
-        const normalizedAlias = normalizeHeader(alias);
-        if (normalized === normalizedAlias) {
+        // Exact match (case-sensitive first, then case-insensitive)
+        if (trimmedHeader === alias) {
           bestMatch = target;
           matchScore = 3;
           break;
         }
-        if (normalized.length > 3 && (normalized.includes(normalizedAlias) || normalizedAlias.includes(normalized))) {
-          if (matchScore < 2) {
-            bestMatch = target;
-            matchScore = 2;
+        // Case-insensitive exact match
+        if (trimmedHeader.toLowerCase() === alias.toLowerCase()) {
+          bestMatch = target;
+          matchScore = 2;
+          break;
+        }
+        // Contains match
+        if (trimmedHeader.length > 2 && alias.length > 2) {
+          const headerLower = trimmedHeader.toLowerCase();
+          const aliasLower = alias.toLowerCase();
+          if (headerLower.includes(aliasLower) || aliasLower.includes(headerLower)) {
+            if (matchScore < 1) {
+              bestMatch = target;
+              matchScore = 1;
+            }
           }
         }
       }
       if (matchScore === 3) break;
     }
 
-    if (!bestMatch && /^\d{4}$/.test(header)) {
-      bestMatch = '';
+    // Special handling for year columns (2013-2030)
+    if (!bestMatch && /^\d{4}$/.test(trimmedHeader)) {
+      bestMatch = ''; // Year columns are handled separately
     }
 
     mapping[header] = bestMatch || '';
     if (bestMatch) usedTargets.add(bestMatch);
   }
 
+  console.log('📋 County Mapping Result:', mapping);
   return mapping;
 }
 
 // ---------------------------------------------------------------------------
-// Detect Data Format
+// Detect Data Format – Strict detection
 // ---------------------------------------------------------------------------
 
 export function detectDataFormat(headers) {
   if (!headers || headers.length === 0) return 'national';
-  const countyIndicators = ['county_code', 'county_name', 'subcounty_code', 'ward_code'];
-  const lowerHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
-  const isCounty = countyIndicators.some(col => lowerHeaders.includes(col));
-  return isCounty ? 'county' : 'national';
+  
+  // List of county-specific column names (exact matches)
+  const countyColumns = [
+    'County_Code', 'County_Name', 'SubCounty_Code', 'SubCounty_Name',
+    'Ward_Code', 'Ward_Name'
+  ];
+  
+  // Check if any county column exists in headers
+  const headerSet = new Set(headers.map(h => h.trim()));
+  const hasCountyColumn = countyColumns.some(col => headerSet.has(col));
+  
+  // Also check case-insensitive
+  const headerLowerSet = new Set(headers.map(h => h.trim().toLowerCase()));
+  const hasCountyLower = countyColumns.some(col => headerLowerSet.has(col.toLowerCase()));
+  
+  console.log('🔍 detectDataFormat:', { hasCountyColumn, hasCountyLower, headers: headers.slice(0, 5) });
+  
+  return (hasCountyColumn || hasCountyLower) ? 'county' : 'national';
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +587,7 @@ export function validateCountyRow(row, mapping, defaults = {}) {
 
   if (!row) return { valid: false, record: {}, errors: ['Empty row provided'] };
 
+  // Map all fields
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -604,11 +599,12 @@ export function validateCountyRow(row, mapping, defaults = {}) {
     } else if (fieldDef.type === 'number') {
       value = normalizeMagnitude(value);
     } else {
-      value = String(value).trim();
+      value = String(value || '').trim();
     }
     record[targetField] = value;
   }
 
+  // Apply defaults
   for (const [key, value] of Object.entries(defaults)) {
     if (value !== undefined && value !== null && value !== '' &&
         (record[key] === undefined || record[key] === null || record[key] === '')) {
@@ -616,10 +612,12 @@ export function validateCountyRow(row, mapping, defaults = {}) {
     }
   }
 
+  // Only require indicator_name
   if (!record.indicator_name || record.indicator_name === '') {
     errors.push('Missing required field: Indicator Name');
   }
 
+  // Validate county_code format
   if (record.county_code && !/^\d{3}$/.test(record.county_code)) {
     errors.push(`Invalid county_code format: ${record.county_code}. Expected 3 digits.`);
   }
@@ -635,6 +633,7 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
   const baseRecord = {};
   if (!row) return [];
 
+  // Map all fields
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -645,11 +644,12 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     } else if (fieldDef.type === 'number') {
       value = normalizeMagnitude(value);
     } else {
-      value = String(value).trim();
+      value = String(value || '').trim();
     }
     baseRecord[targetField] = value;
   }
 
+  // Apply defaults
   for (const [key, value] of Object.entries(defaults)) {
     if (value !== undefined && value !== null && value !== '' &&
         (baseRecord[key] === undefined || baseRecord[key] === null || baseRecord[key] === '')) {
@@ -657,6 +657,7 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     }
   }
 
+  // Generate indicator_id
   const indicatorName = baseRecord.indicator_name || 'unknown';
   const countyCode = baseRecord.county_code || '000';
   const subDomainCode = baseRecord.sub_domain_code || 'gen';
@@ -667,6 +668,7 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
 
   baseRecord.indicator_id = indicatorId;
 
+  // Resolve domain/subdomain
   let subdomainId = null;
   if (baseRecord.sub_domain_code && domainResolver) {
     try {
@@ -680,6 +682,7 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     }
   }
 
+  // Identify year columns (2013-2030)
   const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h));
   const records = [];
 
@@ -698,6 +701,7 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
       subdomain_id: subdomainId,
     };
 
+    // Clean up temporary fields
     delete record.domain;
     delete record.sub_domain;
     delete record.sub_domain_code;
@@ -847,7 +851,7 @@ export async function parseCountyFile(file) {
 
     if (sheetRows.length === 0) continue;
 
-    // Apply silo-healing per sheet with fillColumns = 6 for deeper hierarchy
+    // Apply silo-healing per sheet
     const healedRows = applySiloHealing(sheetRows, 6);
     if (healedRows && healedRows.length > 0) {
       sheets[sheetName] = healedRows;
@@ -873,4 +877,42 @@ export async function parseCountyFile(file) {
   }
 
   return { sheets, headers: allHeaders };
+}
+
+// ---------------------------------------------------------------------------
+// Normalize Magnitude – Fail-Proof Numeric Sanitizer
+// ---------------------------------------------------------------------------
+
+export function normalizeMagnitude(value) {
+  if (value === null || value === undefined || value === '') return null;
+  let str = String(value).trim().toLowerCase();
+  
+  // Human markers
+  const markers = ['...', '-', 'n/a', 'nil', 'tbd', 'none', 'nan', 'pending', 'unknown', 'not available'];
+  if (markers.includes(str)) return null;
+
+  str = str.replace(/[KES|USD|$|,|%]/gi, '');
+  const match = str.match(/^(-?\d+\.?\d*)\s*([KMBT]?)/i);
+  if (!match) return null;
+  
+  let num = parseFloat(match[1]);
+  const suffix = (match[2] || '').toUpperCase();
+  if (suffix === 'K') num *= 1e3;
+  else if (suffix === 'M') num *= 1e6;
+  else if (suffix === 'B') num *= 1e9;
+  else if (suffix === 'T') num *= 1e12;
+  return num;
+}
+
+// ---------------------------------------------------------------------------
+// Sanitize Value – Resilience Helper
+// ---------------------------------------------------------------------------
+
+export function sanitizeValue(val) {
+  if (val === null || val === undefined) return null;
+  const s = String(val).trim().toLowerCase();
+  const markers = ['...', '-', 'n/a', 'nil', 'none', 'tbd', 'nan', 'pending', 'unknown', 'not available'];
+  if (markers.includes(s)) return null;
+  const numeric = parseFloat(s.replace(/[^0-9.-]+/g, ""));
+  return isNaN(numeric) ? null : numeric;
 }
