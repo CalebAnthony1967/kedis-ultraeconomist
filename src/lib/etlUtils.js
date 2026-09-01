@@ -1,13 +1,14 @@
 /**
  * ============================================================================
- * KEDIS UltraEconomist — ETL Utilities
+ * KEDIS UltraEconomist — ETL Utilities (v14.0 - Ultra-Resilient)
  * ============================================================================
  * File parsing, silo-healing, data contract validation, SHA-256 hashing,
  * header auto-mapping, FAIR scoring, and session persistence.
  *
- * Enhanced for: Fully automatic multi-sheet county ingestion (47 sheets),
- * per-sheet silo-healing, domain/subdomain auto-creation, and intelligent
- * column mapping with zero manual intervention.
+ * Enhanced for: Fail-proof multi-sheet county ingestion, per-sheet silo-healing,
+ * domain/subdomain auto-creation, and intelligent column mapping.
+ * 
+ * SOVEREIGN RESILIENCE: Handles human markers (..., -, n/a, etc.) gracefully.
  * ============================================================================
  */
 
@@ -203,43 +204,61 @@ export async function parseFile(file) {
   return applySiloHealing(rows);
 }
 
-// ---------------------------------------------------------------------------
-// Silo-Healing Engine
-// ---------------------------------------------------------------------------
+// ============================================================================
+// SOVEREIGN RESILIENT FUNCTIONS (v14.0 - Fail-Proof)
+// ============================================================================
 
-export function applySiloHealing(rows, fillColumns = 4) {
-  if (!rows || rows.length === 0) return rows || [];
-  const headers = Object.keys(rows[0]);
-  const fillHeaders = headers.slice(0, fillColumns);
-
-  const healed = rows.map(r => ({ ...r }));
-
-  for (let i = 1; i < healed.length; i++) {
-    for (const header of fillHeaders) {
-      const val = healed[i][header];
-      if (val === undefined || val === null || String(val).trim() === '') {
-        healed[i][header] = healed[i - 1][header];
-      }
-    }
-  }
-  return healed;
-}
-
+/**
+ * --- FAIL-PROOF NUMERIC SANITIZER ---
+ * Recognizes human markers used in Kenyan MCDA data and prevents validation crashes.
+ * Returns null for markers, allowing the row to remain valid.
+ */
 export function normalizeMagnitude(value) {
-  if (value === null || value === undefined || value === '') return NaN;
-  let str = String(value).trim();
-  str = str.replace(/^KES\s*/i, '').replace(/^USD\s*/i, '').replace(/^[$]\s*/, '');
-  str = str.replace(/,/g, '');
-  str = str.replace(/%$/, '');
+  if (value === null || value === undefined || value === '') return null;
+  let str = String(value).trim().toLowerCase();
+  
+  // High-End Marker Recognition: Treat these as "Valid Nulls" instead of NaN
+  const markers = ['...', '-', 'n/a', 'nil', 'tbd', 'none', 'nan', 'pending', 'unknown', 'not available'];
+  if (markers.includes(str)) return null;
+
+  str = str.replace(/[KES|USD|$|,|%]/gi, ''); // Strip symbols
   const match = str.match(/^(-?\d+\.?\d*)\s*([KMBT]?)/i);
-  if (!match) return NaN;
+  if (!match) return null; // Return null instead of NaN to keep row valid
+  
   let num = parseFloat(match[1]);
-  const suffix = match[2].toUpperCase();
+  const suffix = (match[2] || '').toUpperCase();
   if (suffix === 'K') num *= 1e3;
   else if (suffix === 'M') num *= 1e6;
   else if (suffix === 'B') num *= 1e9;
   else if (suffix === 'T') num *= 1e12;
   return num;
+}
+
+/**
+ * --- RECURSIVE SILO HEALING (v14) ---
+ * Heals merged Excel headers (Forward-fill) while handling deep hierarchies.
+ * Uses a Contextual Memory Buffer that resets per sheet.
+ */
+export function applySiloHealing(rows, fillColumns = 6) {
+  if (!rows || rows.length === 0) return rows || [];
+  const headers = Object.keys(rows[0]);
+  const fillHeaders = headers.slice(0, Math.min(fillColumns, headers.length));
+  
+  const healed = rows.map(r => ({ ...r }));
+  // Buffer to remember last seen values per sheet
+  let lastSeen = {};
+
+  for (let i = 0; i < healed.length; i++) {
+    for (const header of fillHeaders) {
+      const val = healed[i][header];
+      if (val !== undefined && val !== null && String(val).trim() !== '') {
+        lastSeen[header] = val; // Update memory
+      } else if (lastSeen[header] !== undefined) {
+        healed[i][header] = lastSeen[header]; // Inject memory
+      }
+    }
+  }
+  return healed;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,13 +545,11 @@ export function autoSuggestMappingCounty(headers) {
       
       for (const alias of aliases) {
         const normalizedAlias = normalizeHeader(alias);
-        // Exact match
         if (normalized === normalizedAlias) {
           bestMatch = target;
           matchScore = 3;
           break;
         }
-        // Partial match (header contains alias or vice versa)
         if (normalized.length > 3 && (normalized.includes(normalizedAlias) || normalizedAlias.includes(normalized))) {
           if (matchScore < 2) {
             bestMatch = target;
@@ -543,9 +560,8 @@ export function autoSuggestMappingCounty(headers) {
       if (matchScore === 3) break;
     }
 
-    // Special handling for year columns
     if (!bestMatch && /^\d{4}$/.test(header)) {
-      bestMatch = ''; // Year columns are handled separately
+      bestMatch = '';
     }
 
     mapping[header] = bestMatch || '';
@@ -577,7 +593,6 @@ export function validateCountyRow(row, mapping, defaults = {}) {
 
   if (!row) return { valid: false, record: {}, errors: ['Empty row provided'] };
 
-  // First, map all fields
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -594,7 +609,6 @@ export function validateCountyRow(row, mapping, defaults = {}) {
     record[targetField] = value;
   }
 
-  // Apply defaults
   for (const [key, value] of Object.entries(defaults)) {
     if (value !== undefined && value !== null && value !== '' &&
         (record[key] === undefined || record[key] === null || record[key] === '')) {
@@ -602,12 +616,10 @@ export function validateCountyRow(row, mapping, defaults = {}) {
     }
   }
 
-  // Only require indicator_name – everything else can be empty or inferred
   if (!record.indicator_name || record.indicator_name === '') {
     errors.push('Missing required field: Indicator Name');
   }
 
-  // If county_code is invalid or missing, try to infer from defaults
   if (record.county_code && !/^\d{3}$/.test(record.county_code)) {
     errors.push(`Invalid county_code format: ${record.county_code}. Expected 3 digits.`);
   }
@@ -623,7 +635,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
   const baseRecord = {};
   if (!row) return [];
 
-  // Map all fields
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -639,7 +650,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     baseRecord[targetField] = value;
   }
 
-  // Apply defaults
   for (const [key, value] of Object.entries(defaults)) {
     if (value !== undefined && value !== null && value !== '' &&
         (baseRecord[key] === undefined || baseRecord[key] === null || baseRecord[key] === '')) {
@@ -647,7 +657,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     }
   }
 
-  // Generate indicator_id from indicator_name + county_code + sub_domain_code
   const indicatorName = baseRecord.indicator_name || 'unknown';
   const countyCode = baseRecord.county_code || '000';
   const subDomainCode = baseRecord.sub_domain_code || 'gen';
@@ -658,7 +667,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
 
   baseRecord.indicator_id = indicatorId;
 
-  // Resolve domain/subdomain
   let subdomainId = null;
   if (baseRecord.sub_domain_code && domainResolver) {
     try {
@@ -672,7 +680,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     }
   }
 
-  // Identify year columns (2013-2030)
   const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h));
   const records = [];
 
@@ -682,7 +689,7 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     if (rawValue === undefined || rawValue === null || rawValue === '') continue;
 
     const value = normalizeMagnitude(rawValue);
-    if (isNaN(value)) continue;
+    if (value === null) continue;
 
     const record = {
       ...baseRecord,
@@ -691,7 +698,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
       subdomain_id: subdomainId,
     };
 
-    // Clean up temporary fields
     delete record.domain;
     delete record.sub_domain;
     delete record.sub_domain_code;
@@ -801,7 +807,7 @@ export async function parseMultiSheetXLSX(file, applyHealing = true) {
     }));
 
     if (applyHealing) {
-      const healedRows = applySiloHealing(rowsWithSheet, 4);
+      const healedRows = applySiloHealing(rowsWithSheet, 6);
       allRows.push(...healedRows);
     } else {
       allRows.push(...rowsWithSheet);
@@ -841,11 +847,10 @@ export async function parseCountyFile(file) {
 
     if (sheetRows.length === 0) continue;
 
-    // Apply silo-healing per sheet
-    const healedRows = applySiloHealing(sheetRows, 4);
+    // Apply silo-healing per sheet with fillColumns = 6 for deeper hierarchy
+    const healedRows = applySiloHealing(sheetRows, 6);
     if (healedRows && healedRows.length > 0) {
       sheets[sheetName] = healedRows;
-      // Capture headers from the first non-empty sheet
       if (allHeaders.length === 0) {
         allHeaders = Object.keys(healedRows[0]);
       }
@@ -858,7 +863,6 @@ export async function parseCountyFile(file) {
     throw new Error('No data found in any sheet.');
   }
 
-  // If no headers were found, try to get them from the first non-empty sheet
   if (allHeaders.length === 0) {
     for (const sheetName of Object.keys(sheets)) {
       if (sheets[sheetName] && sheets[sheetName].length > 0) {
