@@ -75,6 +75,8 @@ export default function ETLPipeline() {
   // NEW: Upload type state
   const [uploadType, setUploadType] = useState('national');
   const [sheetProgress, setSheetProgress] = useState({ current: 0, total: 0 });
+  // NEW: Store sheets for county data
+  const [rawRowsBySheet, setRawRowsBySheet] = useState({});
 
   // -------------------------------------------------------------------------
   // Session Persistence — restore on mount
@@ -95,6 +97,7 @@ export default function ETLPipeline() {
       setHeaders(saved.headers || []);
       setMapping(saved.mapping || {});
       setUploadType(saved.uploadType || 'national');
+      setRawRowsBySheet(saved.rawRowsBySheet || {});
 
       if (restoredStage !== 'upload') {
         toast({
@@ -120,9 +123,10 @@ export default function ETLPipeline() {
         headers,
         mapping,
         uploadType,
+        rawRowsBySheet,
       });
     }
-  }, [stage, fileMetadata, sourceMCDA, frameworkName, temporalYear, rawRows, headers, mapping, uploadType]);
+  }, [stage, fileMetadata, sourceMCDA, frameworkName, temporalYear, rawRows, headers, mapping, uploadType, rawRowsBySheet]);
 
   // -------------------------------------------------------------------------
   // Job History
@@ -235,30 +239,34 @@ export default function ETLPipeline() {
       const file_uri = data?.path || filePath;
 
       setStepLabel(`Parsing ${ext} file…`);
-      let rows, fileHeaders;
-      
-      // Detect if this is a county file (multi-sheet XLSX)
+      let rows = [];
+      let fileHeaders = [];
       let detectedType = 'national';
       
       if (ext === 'XLSX') {
         try {
-          // Parse all sheets for county detection
+          // Parse all sheets for county detection - now returns { sheets: {...}, headers: [...] }
           const countyResult = await parseCountyFile(selectedFile);
-          rows = countyResult.rows;
-          fileHeaders = countyResult.headers;
-          // Auto-detect data format
+          fileHeaders = countyResult.headers || [];
+          setRawRowsBySheet(countyResult.sheets || {});
+          // Get first sheet for preview
+          const sheetKeys = Object.keys(countyResult.sheets || {});
+          if (sheetKeys.length > 0) {
+            rows = countyResult.sheets[sheetKeys[0]] || [];
+          }
           detectedType = detectDataFormat(fileHeaders);
         } catch (parseErr) {
-          // If parseCountyFile fails, fall back to regular parsing
           console.warn('County parse fallback:', parseErr);
           rows = await parseFile(selectedFile);
           fileHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
           detectedType = detectDataFormat(fileHeaders);
+          setRawRowsBySheet({});
         }
       } else {
         rows = await parseFile(selectedFile);
         fileHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
         detectedType = detectDataFormat(fileHeaders);
+        setRawRowsBySheet({});
       }
 
       // Set upload type based on detection
@@ -268,19 +276,19 @@ export default function ETLPipeline() {
       let autoMapping;
       if (finalUploadType === 'county') {
         autoMapping = autoSuggestMappingCounty(fileHeaders);
-        // Auto-map sheet names to county_code if a column exists
-        // The mapping will handle this via the __sheet attribute
       } else {
         autoMapping = autoSuggestMapping(fileHeaders);
         autoMapping = enhanceMapping(autoMapping, fileHeaders);
       }
 
+      const sheetCount = Object.keys(rawRowsBySheet).length;
       setFileMetadata({
         file_uri,
         file_name: selectedFile.name,
         file_type: ext,
         file_size: selectedFile.size,
         sha256_hash: sha256,
+        sheet_count: sheetCount || 1,
       });
       setRawRows(rows);
       setHeaders(fileHeaders);
@@ -290,9 +298,10 @@ export default function ETLPipeline() {
 
       const mappedCount = Object.values(autoMapping).filter(v => v).length;
       const dataTypeLabel = finalUploadType === 'county' ? 'County' : 'National';
+      const sheetInfo = finalUploadType === 'county' && sheetCount > 0 ? ` (${sheetCount} sheets)` : '';
       toast({
         title: `${dataTypeLabel} file processed & auto-mapped`,
-        description: `${rows.length} rows · ${mappedCount} columns intelligently mapped`,
+        description: `${rows.length} rows · ${mappedCount} columns intelligently mapped${sheetInfo}`,
         duration: 3000,
       });
     } catch (error) {
@@ -306,6 +315,7 @@ export default function ETLPipeline() {
       setRawRows([]);
       setHeaders([]);
       setMapping({});
+      setRawRowsBySheet({});
     } finally {
       setIsProcessing(false);
       setStepLabel('');
@@ -325,6 +335,7 @@ export default function ETLPipeline() {
     setRawRows([]);
     setHeaders([]);
     setMapping({});
+    setRawRowsBySheet({});
     setSourceMCDA('');
     setFrameworkName('');
     setTemporalYear('');
@@ -516,7 +527,17 @@ export default function ETLPipeline() {
     }
 
     // --- COUNTY DATA ---
-    // County-specific validation
+    // Use rawRowsBySheet for county data
+    if (Object.keys(rawRowsBySheet).length === 0) {
+      toast({
+        title: 'No county data found',
+        description: 'Please upload a valid county workbook with sheets.',
+        variant: 'destructive',
+        duration: 3000,
+      });
+      return;
+    }
+
     const countyRequiredFields = COUNTY_SCHEMA_FIELDS.filter(f => f.required);
     const mappedTargets = new Set(Object.values(mapping).filter(Boolean));
     const missingRequired = countyRequiredFields.filter(f => !mappedTargets.has(f.key));
@@ -540,18 +561,11 @@ export default function ETLPipeline() {
 
       const defaults = {
         data_source: sourceMCDA || 'County Government',
-        ingestion_job_id: null, // will be set after job creation
+        ingestion_job_id: null,
       };
 
-      // Group rows by sheet for progress tracking
-      const sheets = {};
-      for (const row of rawRows) {
-        const sheet = row.__sheet || 'Unknown';
-        if (!sheets[sheet]) sheets[sheet] = [];
-        sheets[sheet].push(row);
-      }
-
-      const sheetNames = Object.keys(sheets);
+      // Get sheets from rawRowsBySheet
+      const sheetNames = Object.keys(rawRowsBySheet);
       const totalSheets = sheetNames.length;
       let processedSheets = 0;
       const allValidRecords = [];
@@ -559,7 +573,7 @@ export default function ETLPipeline() {
 
       // Process each sheet
       for (const sheetName of sheetNames) {
-        const sheetRows = sheets[sheetName];
+        const sheetRows = rawRowsBySheet[sheetName] || [];
         processedSheets++;
         setSheetProgress({ current: processedSheets, total: totalSheets });
         setStepLabel(`Processing sheet ${processedSheets} of ${totalSheets} (${sheetName})…`);
@@ -568,7 +582,6 @@ export default function ETLPipeline() {
         // Auto-extract county_code from sheet name if it matches 3-digit code
         const sheetCode = sheetName.match(/^(\d{3})/);
         if (sheetCode) {
-          // Inject county_code into each row if not already present
           for (const row of sheetRows) {
             if (!row.county_code) {
               row.county_code = sheetCode[1];
@@ -581,11 +594,10 @@ export default function ETLPipeline() {
           if (result.valid) {
             allValidRecords.push(result.record);
           } else {
-            allErrors.push({ sheet: sheetName, row: row.__row || 0, errors: result.errors });
+            allErrors.push({ sheet: sheetName, errors: result.errors });
           }
         }
 
-        // Small delay to allow UI update
         await new Promise(r => setTimeout(r, 50));
       }
 
@@ -599,10 +611,7 @@ export default function ETLPipeline() {
       // Transform records (expand years)
       const transformedRecords = [];
       for (const record of allValidRecords) {
-        // Create a fake row with year columns from the record
         const rowWithYears = { ...record };
-        // The transform function expects year columns in the row
-        // We'll add them from the record's year/value if present, or from the raw row
         const transformed = await transformCountyRow(
           rowWithYears,
           mapping,
@@ -619,7 +628,6 @@ export default function ETLPipeline() {
       setValidationProgress(70);
       setStepLabel(`Ingesting ${transformedRecords.length} county records…`);
 
-      // Get user
       const user = await supabaseAuth.me();
 
       // Create ingestion job first
@@ -671,7 +679,6 @@ export default function ETLPipeline() {
       setValidationProgress(95);
       setStepLabel('Recording audit lineage…');
 
-      // Update job status
       await supabase
         .from('data_ingestion_jobs')
         .update({
@@ -682,7 +689,6 @@ export default function ETLPipeline() {
         })
         .eq('id', job.id);
 
-      // Audit log
       await supabase.from('audit_logs').insert({
         action: 'upload',
         user_email: user.email,
@@ -739,6 +745,7 @@ export default function ETLPipeline() {
     setRawRows([]);
     setHeaders([]);
     setMapping({});
+    setRawRowsBySheet({});
     setSourceMCDA('');
     setFrameworkName('');
     setTemporalYear('');
@@ -873,9 +880,9 @@ export default function ETLPipeline() {
                         {Object.entries(mapping).filter(([, v]) => v).map(([k, v]) => `${k} → ${v}`).join(' · ')}
                       </span>
                     </p>
-                    {uploadType === 'county' && sheetProgress.total > 0 && (
+                    {uploadType === 'county' && Object.keys(rawRowsBySheet).length > 0 && (
                       <p className="text-xs text-primary mt-1">
-                        📊 {sheetProgress.total} sheets detected – will process each separately
+                        📊 {Object.keys(rawRowsBySheet).length} sheets detected – will process each separately
                       </p>
                     )}
                   </div>
