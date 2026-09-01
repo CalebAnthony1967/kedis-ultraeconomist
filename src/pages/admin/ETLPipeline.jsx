@@ -383,7 +383,7 @@ export default function ETLPipeline() {
   }, []);
 
   // =========================================================================
-  // RECURSIVE INGESTION ENGINE (v15.0 - Strict Column Alignment)
+  // RECURSIVE INGESTION ENGINE (v16.0 - FORCE INGEST ALL SHEETS)
   // =========================================================================
   const handleValidateAndIngest = async () => {
     setStage('validating');
@@ -558,7 +558,7 @@ export default function ETLPipeline() {
       }
 
       // ============================================================
-      // BRANCH 2: COUNTY DATA – WITH PILLAR MAPPING
+      // BRANCH 2: COUNTY DATA – FORCE INGEST ALL SHEETS
       // ============================================================
       if (Object.keys(rawRowsBySheet).length === 0) {
         toast({
@@ -604,23 +604,29 @@ export default function ETLPipeline() {
 
       const sheetsToProcess = Object.entries(rawRowsBySheet);
       const totalSheets = sheetsToProcess.length;
+      const sheetSummary = [];
 
       console.log(`📊 Processing ${totalSheets} county sheets...`);
 
-      // Process each sheet
+      // Process each sheet - INDEPENDENTLY
+      // NO SHEET SHOULD FAIL THE ENTIRE PROCESS
       for (let sIdx = 0; sIdx < totalSheets; sIdx++) {
         const [sheetName, rows] = sheetsToProcess[sIdx];
+        let sheetInserted = 0;
+        let sheetFailed = false;
+        let sheetErrors = [];
+
         setStepLabel(`Healing & Syncing: ${sheetName} (${sIdx + 1}/${totalSheets})...`);
         setValidationProgress(Math.round((sIdx / totalSheets) * 40));
 
         try {
-          // Apply Silo-Healing (Forward-Fill) to recover merged headers
+          // Apply Silo-Healing
           const healedRows = applySiloHealing(rows, 6);
           const validBatch = [];
 
           for (let row of healedRows) {
             try {
-              // Auto-tag County Code from sheet name if 3-digits (e.g. "026")
+              // Auto-tag County Code from sheet name
               const sheetCode = sheetName.match(/^(\d{3})/);
               const countyCode = sheetCode ? sheetCode[1] : (row.County_Code || row.county_code || '');
 
@@ -632,9 +638,7 @@ export default function ETLPipeline() {
               
               if (!indicatorName) continue;
 
-              // ============================================================
-              // FIX: Map pillar value to valid enum
-              // ============================================================
+              // Map pillar
               const rawPillar = row.Pillar || row.pillar || '';
               const mappedPillar = mapCountyPillarToEnum(rawPillar);
 
@@ -652,7 +656,7 @@ export default function ETLPipeline() {
                 is_verified: true,
                 entity_level: countyCode ? 'County' : 'National',
                 indicator_id: indicatorName.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 50) + '_' + (countyCode || '000'),
-                pillar: mappedPillar, // Use mapped pillar value
+                pillar: mappedPillar,
               };
 
               // Map other metadata fields
@@ -665,7 +669,7 @@ export default function ETLPipeline() {
                 baseRecord[targetField] = value;
               });
 
-              // Look up subdomain_id from sub_domain_code
+              // Look up subdomain_id
               const subDomainCodeKey = Object.keys(mapping).find(k => mapping[k] === 'sub_domain_code');
               const subDomainCode = subDomainCodeKey ? String(row[subDomainCodeKey] || '').trim() : '';
               
@@ -701,14 +705,18 @@ export default function ETLPipeline() {
               // Wide-to-long transformation
               const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h.trim()));
               
+              // Get subcounty and ward codes for uniqueness
+              const subcountyCode = row.SubCounty_Code || row.subcounty_code || '000';
+              const wardCode = row.Ward_Code || row.ward_code || '000';
+
               for (const yearKey of yearColumns) {
                 const val = sanitizeValue(row[yearKey]);
                 if (val === null) continue;
 
                 const year = parseInt(yearKey.trim(), 10);
                 
-                // Generate SPI for uniqueness
-                const spi = `${indicatorName.substring(0, 15).replace(/\s+/g, '_').toUpperCase()}_${countyCode || 'KE'}_${year}`;
+                // Generate UNIQUE SPI with subcounty + ward
+                const spi = `${indicatorName.substring(0, 15).replace(/\s+/g, '_').toUpperCase()}_${countyCode || 'KE'}_${subcountyCode}_${wardCode}_${year}`;
 
                 const record = {
                   ...baseRecord,
@@ -725,45 +733,71 @@ export default function ETLPipeline() {
               }
             } catch (rowErr) {
               console.warn('Row processing error:', rowErr);
-              globalAnomalies.push({ sheet: sheetName, error: "Row transformation failed" });
+              sheetErrors.push("Row transformation failed");
             }
           }
 
-          // Batch upsert
-          if (validBatch.length > 0) {
-            for (let i = 0; i < validBatch.length; i += 500) {
-              const chunk = validBatch.slice(i, i + 500);
+          // ============================================================
+          // DEDUPLICATE WITHIN THE SHEET BEFORE UPSERT
+          // ============================================================
+          const dedupedBatch = [];
+          const seenSPIs = new Set();
+          for (const record of validBatch) {
+            if (!seenSPIs.has(record.indicator_id_spi)) {
+              seenSPIs.add(record.indicator_id_spi);
+              dedupedBatch.push(record);
+            }
+          }
+
+          // Batch upsert - CONTINUE ON ERROR
+          if (dedupedBatch.length > 0) {
+            for (let i = 0; i < dedupedBatch.length; i += 500) {
+              const chunk = dedupedBatch.slice(i, i + 500);
               const { data, error: upsertError } = await supabase
                 .from('indicators')
                 .upsert(chunk, { onConflict: 'indicator_id_spi' });
 
               if (upsertError) {
                 console.error(`❌ Sheet ${sheetName} upsert error:`, upsertError);
-                console.error('❌ Sample record:', chunk[0]);
-                globalAnomalies.push({ sheet: sheetName, error: upsertError.message });
+                sheetErrors.push(upsertError.message);
+                sheetFailed = true;
               } else {
+                sheetInserted += chunk.length;
                 globalInserted += chunk.length;
                 console.log(`✅ Inserted ${chunk.length} records from ${sheetName}`);
               }
             }
           } else {
             console.warn(`⚠️ No valid records in sheet: ${sheetName}`);
-            globalAnomalies.push({ sheet: sheetName, error: 'No valid records found' });
+            sheetErrors.push('No valid records found');
+            sheetFailed = true;
           }
-
-          // Update job progress
-          await supabase
-            .from('data_ingestion_jobs')
-            .update({
-              processed_sheets: sIdx + 1,
-              records_ingested: globalInserted,
-            })
-            .eq('id', job.id);
 
         } catch (sheetErr) {
           console.error(`❌ Sheet ${sheetName} processing error:`, sheetErr);
-          globalAnomalies.push({ sheet: sheetName, error: sheetErr.message });
+          sheetErrors.push(sheetErr.message);
+          sheetFailed = true;
         }
+
+        // Always update progress - even if sheet failed
+        await supabase
+          .from('data_ingestion_jobs')
+          .update({
+            processed_sheets: sIdx + 1,
+            records_ingested: globalInserted,
+          })
+          .eq('id', job.id);
+
+        // Track sheet summary
+        if (sheetFailed) {
+          globalAnomalies.push({ sheet: sheetName, errors: sheetErrors.slice(0, 5) });
+        }
+        sheetSummary.push({
+          sheet: sheetName,
+          status: sheetFailed ? 'failed' : 'success',
+          records: sheetInserted,
+          errors: sheetErrors.slice(0, 3),
+        });
 
         setValidationProgress(40 + Math.round(((sIdx + 1) / totalSheets) * 60));
         await new Promise(r => setTimeout(r, 50));
@@ -781,20 +815,27 @@ export default function ETLPipeline() {
         })
         .eq('id', job.id);
 
-      console.log('📊 Final Summary:', {
-        globalInserted,
-        anomalies: globalAnomalies.length,
-        status: finalStatus,
-      });
+      // Log sheet summary to console
+      console.log('📊 Sheet Ingestion Summary:');
+      console.table(sheetSummary);
 
-      // Audit log
+      // Audit log with sheet details
       await supabase.from('audit_logs').insert({
         action: 'upload',
         user_email: user.email,
         user_role: user.portal_role,
         target_entity: 'indicators',
         target_id: job?.id,
-        details: `Sovereign Sync: ${globalInserted} county records from ${totalSheets} sheets. ${globalAnomalies.length} anomalies.`,
+        details: JSON.stringify({
+          summary: {
+            totalRecords: globalInserted,
+            totalSheets: totalSheets,
+            successfulSheets: sheetSummary.filter(s => s.status === 'success').length,
+            failedSheets: sheetSummary.filter(s => s.status === 'failed').length,
+            anomalies: globalAnomalies.length
+          },
+          sheets: sheetSummary
+        }),
         sha256_hash: fileMetadata?.sha256_hash || '',
       });
 
@@ -811,9 +852,9 @@ export default function ETLPipeline() {
       setValidationProgress(100);
       
       toast({
-        title: globalInserted > 0 ? 'County Ingestion Successful' : 'No Records Ingested',
+        title: globalInserted > 0 ? 'County Ingestion Complete' : 'No Records Ingested',
         description: globalInserted > 0 
-          ? `${globalInserted} records from ${totalSheets} sheets committed. ${globalAnomalies.length} anomalies flagged.`
+          ? `${globalInserted} records from ${totalSheets} sheets. ${sheetSummary.filter(s => s.status === 'success').length} sheets succeeded, ${sheetSummary.filter(s => s.status === 'failed').length} failed.`
           : `${globalAnomalies.length} anomalies found. Please check your data.`,
         variant: globalInserted > 0 ? 'success' : 'warning',
       });
