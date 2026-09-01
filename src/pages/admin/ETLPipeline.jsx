@@ -25,6 +25,7 @@ import {
   getOrCreateDomainSubdomain,
   applySiloHealing,
   normalizeMagnitude,
+  sanitizeValue,
 } from '@/lib/etlUtils';
 import { ArrowRight, FileCheck, Info, Database, CheckCircle2, X } from 'lucide-react';
 
@@ -32,17 +33,6 @@ const MCDA_OPTIONS = [
   'The National Treasury', 'KNBS', 'CBK', 'Ministry of Education',
   'Ministry of Health', 'Ministry of Agriculture', 'KIPPRA', 'County Government',
 ];
-
-// --- RESILIENCE HELPER: Sanitize Markers & Numbers ---
-const sanitizeValue = (val) => {
-  if (val === null || val === undefined) return null;
-  const s = String(val).trim().toLowerCase();
-  // Handle common human markers in government data
-  if (['...', '-', 'n/a', 'nil', 'none', 'tbd', 'nan', 'pending', 'unknown', 'not available'].includes(s)) return null;
-  // Strip commas and symbols, convert to float
-  const numeric = parseFloat(s.replace(/[^0-9.-]+/g, ""));
-  return isNaN(numeric) ? null : numeric;
-};
 
 export default function ETLPipeline() {
   const { t } = useLanguage();
@@ -392,7 +382,7 @@ export default function ETLPipeline() {
   }, []);
 
   // =========================================================================
-  // RECURSIVE INGESTION ENGINE (v14.1 - FAIL-PROOF & DYNAMIC)
+  // RECURSIVE INGESTION ENGINE (v15.0 - Strict Column Alignment)
   // =========================================================================
   const handleValidateAndIngest = async () => {
     setStage('validating');
@@ -405,7 +395,7 @@ export default function ETLPipeline() {
       let globalAnomalies = [];
 
       // ============================================================
-      // BRANCH 1: NATIONAL DATA – Use original working logic
+      // BRANCH 1: NATIONAL DATA – ORIGINAL WORKING LOGIC (UNCHANGED)
       // ============================================================
       if (uploadType === 'national') {
         const requiredFields = GLOBAL_SCHEMA_FIELDS.filter(f => f.required);
@@ -567,7 +557,7 @@ export default function ETLPipeline() {
       }
 
       // ============================================================
-      // BRANCH 2: COUNTY DATA – Multi-sheet ingestion
+      // BRANCH 2: COUNTY DATA – STRICT COLUMN ALIGNMENT
       // ============================================================
       if (Object.keys(rawRowsBySheet).length === 0) {
         toast({
@@ -584,6 +574,7 @@ export default function ETLPipeline() {
       const totalSheets = sheetsToProcess.length;
 
       console.log(`📊 Processing ${totalSheets} county sheets...`);
+      console.log('📋 County Mapping:', mapping);
 
       // Process each sheet
       for (let sIdx = 0; sIdx < totalSheets; sIdx++) {
@@ -599,7 +590,7 @@ export default function ETLPipeline() {
           try {
             // Auto-tag County Code from sheet name if 3-digits (e.g. "026")
             const sheetCode = sheetName.match(/^(\d{3})/);
-            const countyCode = sheetCode ? sheetCode[1] : (row.county_code || '');
+            const countyCode = sheetCode ? sheetCode[1] : (row.County_Code || row.county_code || '');
 
             // Find Indicator Name from mapping
             const indicatorNameKey = Object.keys(mapping).find(k => 
@@ -609,43 +600,37 @@ export default function ETLPipeline() {
             
             if (!indicatorName) continue;
 
-            // Build base metadata
+            // Build base metadata with strict column mapping
             const baseRecord = {
               created_by: user.id,
               source_mcda: sourceMCDA || 'County Government',
               county_code: countyCode,
+              county_name: row.County_Name || row.county_name || '',
+              subcounty_code: row.SubCounty_Code || row.subcounty_code || '',
+              subcounty_name: row.SubCounty_Name || row.subcounty_name || '',
+              ward_code: row.Ward_Code || row.ward_code || '',
+              ward_name: row.Ward_Name || row.ward_name || '',
               name: indicatorName,
               is_verified: true,
               entity_level: countyCode ? 'County' : 'National',
             };
 
-            // Map other metadata fields
+            // Map other metadata fields from the mapping
             Object.entries(mapping).forEach(([sourceHeader, targetField]) => {
               if (!targetField || ['indicator_name', 'name', 'year', 'value'].includes(targetField)) return;
-              const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
-              if (!fieldDef) return;
-              
-              let value = row[sourceHeader];
-              if (fieldDef.type === 'integer') {
-                value = Math.round(normalizeMagnitude(value));
-              } else if (fieldDef.type === 'number') {
-                value = normalizeMagnitude(value);
-              } else {
-                value = String(value || '').trim();
-              }
+              const value = row[sourceHeader] !== undefined ? String(row[sourceHeader] || '').trim() : '';
               baseRecord[targetField] = value;
             });
 
             // --- WIDE-TO-LONG TRANSFORMATION ---
-            // Identify columns that look like years (2013, 2014... 2030)
-            // Uses flexible regex to catch "2024", " 2024", "2024 Actual"
-            const yearColumns = Object.keys(row).filter(h => /\b\d{4}\b/.test(h));
+            // Identify columns that look like years (2013-2030)
+            const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h.trim()));
             
             for (const yearKey of yearColumns) {
               const val = sanitizeValue(row[yearKey]);
-              if (val === null) continue; // Skip markers like "...", "-" or empty cells
+              if (val === null) continue;
 
-              const year = parseInt(yearKey.match(/\d{4}/)[0], 10);
+              const year = parseInt(yearKey.trim(), 10);
               
               // Generate a Sovereign Persistent Identifier (SPI) for uniqueness
               const spi = `${indicatorName.substring(0, 15).replace(/\s+/g, '_').toUpperCase()}_${countyCode || 'KE'}_${year}`;
@@ -658,6 +643,7 @@ export default function ETLPipeline() {
               });
             }
           } catch (rowErr) {
+            console.warn('Row processing error:', rowErr);
             globalAnomalies.push({ sheet: sheetName, error: "Row transformation failed" });
           }
         }
