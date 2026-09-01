@@ -1,20 +1,31 @@
-﻿import React from 'react';
+import React from 'react';
 import { TableProperties, ArrowRight, Sparkles, Info, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { GLOBAL_SCHEMA_FIELDS } from '@/lib/etlUtils';
+import { GLOBAL_SCHEMA_FIELDS, COUNTY_SCHEMA_FIELDS } from '@/lib/etlUtils';
 
-export default function ETLMappingPanel({ headers, mapping, onMappingChange, onAutoMap }) {
+export default function ETLMappingPanel({ 
+  headers, 
+  mapping, 
+  onMappingChange, 
+  onAutoMap,
+  schema = 'national', // 'national' or 'county'
+}) {
   const mappedCount = Object.values(mapping).filter(v => v).length;
-  const requiredFields = GLOBAL_SCHEMA_FIELDS.filter(f => f.required);
+  
+  // Select the appropriate schema based on the prop
+  const schemaFields = schema === 'county' ? COUNTY_SCHEMA_FIELDS : GLOBAL_SCHEMA_FIELDS;
+  const requiredFields = schemaFields.filter(f => f.required);
   const mappedRequired = requiredFields.filter(f => Object.values(mapping).includes(f.key));
   const allRequiredMapped = mappedRequired.length === requiredFields.length;
+
+  const schemaLabel = schema === 'county' ? 'County Data' : 'National Data';
 
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <TableProperties className="h-4 w-4 text-primary" />
-          Global Schema Mapping
+          Global Schema Mapping — {schemaLabel}
           <Tooltip>
             <TooltipTrigger asChild>
               <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
@@ -45,7 +56,7 @@ export default function ETLMappingPanel({ headers, mapping, onMappingChange, onA
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {headers.map((source) => {
-          const targetField = GLOBAL_SCHEMA_FIELDS.find(f => f.key === mapping[source]);
+          const targetField = schemaFields.find(f => f.key === mapping[source]);
           const isRequired = targetField?.required;
           return (
             <div key={source} className="flex items-center gap-2">
@@ -64,7 +75,7 @@ export default function ETLMappingPanel({ headers, mapping, onMappingChange, onA
                 className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary min-w-0"
               >
                 <option value="">— Skip —</option>
-                {GLOBAL_SCHEMA_FIELDS.map(f => (
+                {schemaFields.map(f => (
                   <option key={f.key} value={f.key}>
                     {f.label}{f.required ? ' *' : ''}
                   </option>
