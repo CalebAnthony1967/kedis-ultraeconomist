@@ -26,6 +26,7 @@ import {
   applySiloHealing,
   normalizeMagnitude,
   sanitizeValue,
+  mapCountyPillarToEnum,
 } from '@/lib/etlUtils';
 import { ArrowRight, FileCheck, Info, Database, CheckCircle2, X } from 'lucide-react';
 
@@ -557,7 +558,7 @@ export default function ETLPipeline() {
       }
 
       // ============================================================
-      // BRANCH 2: COUNTY DATA – FIXED WITH PROPER COLUMN MAPPING
+      // BRANCH 2: COUNTY DATA – WITH PILLAR MAPPING
       // ============================================================
       if (Object.keys(rawRowsBySheet).length === 0) {
         toast({
@@ -631,7 +632,13 @@ export default function ETLPipeline() {
               
               if (!indicatorName) continue;
 
-              // Build base record - DO NOT include 'domain' or 'sub_domain' as they don't exist in DB
+              // ============================================================
+              // FIX: Map pillar value to valid enum
+              // ============================================================
+              const rawPillar = row.Pillar || row.pillar || '';
+              const mappedPillar = mapCountyPillarToEnum(rawPillar);
+
+              // Build base record
               const baseRecord = {
                 created_by: user.id,
                 source_mcda: sourceMCDA || 'County Government',
@@ -645,13 +652,13 @@ export default function ETLPipeline() {
                 is_verified: true,
                 entity_level: countyCode ? 'County' : 'National',
                 indicator_id: indicatorName.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 50) + '_' + (countyCode || '000'),
+                pillar: mappedPillar, // Use mapped pillar value
               };
 
-              // Map other metadata fields - SKIP 'domain' and 'sub_domain' (not DB columns)
+              // Map other metadata fields
               Object.entries(mapping).forEach(([sourceHeader, targetField]) => {
                 if (!targetField) return;
-                // Skip fields that are not database columns
-                const skipFields = ['indicator_name', 'name', 'year', 'value', 'domain', 'sub_domain', 'sub_domain_code'];
+                const skipFields = ['indicator_name', 'name', 'year', 'value', 'domain', 'sub_domain', 'sub_domain_code', 'pillar'];
                 if (skipFields.includes(targetField)) return;
                 
                 const value = row[sourceHeader] !== undefined ? String(row[sourceHeader] || '').trim() : '';
@@ -665,7 +672,6 @@ export default function ETLPipeline() {
               let subdomainId = null;
               if (subDomainCode) {
                 try {
-                  // Try to find existing subdomain
                   const { data: subData, error: subError } = await supabase
                     .from('subdomains')
                     .select('id')
@@ -675,7 +681,6 @@ export default function ETLPipeline() {
                   if (!subError && subData) {
                     subdomainId = subData.id;
                   } else {
-                    // Try to create it
                     const domainNameKey = Object.keys(mapping).find(k => mapping[k] === 'domain');
                     const domainName = domainNameKey ? String(row[domainNameKey] || '').trim() : '';
                     const subDomainNameKey = Object.keys(mapping).find(k => mapping[k] === 'sub_domain');
@@ -712,7 +717,6 @@ export default function ETLPipeline() {
                   value: val,
                 };
 
-                // Only add subdomain_id if we found one
                 if (subdomainId) {
                   record.subdomain_id = subdomainId;
                 }
@@ -725,7 +729,7 @@ export default function ETLPipeline() {
             }
           }
 
-          // Batch upsert with error handling
+          // Batch upsert
           if (validBatch.length > 0) {
             for (let i = 0; i < validBatch.length; i += 500) {
               const chunk = validBatch.slice(i, i + 500);
