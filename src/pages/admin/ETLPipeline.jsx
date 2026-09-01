@@ -33,6 +33,17 @@ const MCDA_OPTIONS = [
   'Ministry of Health', 'Ministry of Agriculture', 'KIPPRA', 'County Government',
 ];
 
+// --- RESILIENCE HELPER: Sanitize Markers & Numbers ---
+const sanitizeValue = (val) => {
+  if (val === null || val === undefined) return null;
+  const s = String(val).trim().toLowerCase();
+  // Handle common human markers in government data
+  if (['...', '-', 'n/a', 'nil', 'none', 'tbd', 'nan', 'pending', 'unknown', 'not available'].includes(s)) return null;
+  // Strip commas and symbols, convert to float
+  const numeric = parseFloat(s.replace(/[^0-9.-]+/g, ""));
+  return isNaN(numeric) ? null : numeric;
+};
+
 export default function ETLPipeline() {
   const { t } = useLanguage();
   
@@ -381,7 +392,7 @@ export default function ETLPipeline() {
   }, []);
 
   // =========================================================================
-  // RECURSIVE INGESTION ENGINE (v14 Fail-Proof - FIXED)
+  // RECURSIVE INGESTION ENGINE (v14.1 - FAIL-PROOF & DYNAMIC)
   // =========================================================================
   const handleValidateAndIngest = async () => {
     setStage('validating');
@@ -392,51 +403,225 @@ export default function ETLPipeline() {
       const user = await supabaseAuth.me();
       let globalInserted = 0;
       let globalAnomalies = [];
-      
-      // Determine work scope: Single sheet (National) or Multi-sheet (County)
-      const sheetsToProcess = uploadType === 'county' 
-        ? Object.entries(rawRowsBySheet) 
-        : [['National', rawRows]];
 
+      // ============================================================
+      // BRANCH 1: NATIONAL DATA – Use original working logic
+      // ============================================================
+      if (uploadType === 'national') {
+        const requiredFields = GLOBAL_SCHEMA_FIELDS.filter(f => f.required);
+        const mappedTargets = new Set(Object.values(mapping).filter(Boolean));
+        const missingRequired = requiredFields.filter(f => !mappedTargets.has(f.key));
+
+        if (missingRequired.length > 0) {
+          toast({
+            title: 'Mapping incomplete',
+            description: `Required fields not mapped: ${missingRequired.map(f => f.label).join(', ')}`,
+            variant: 'destructive',
+            duration: 3000,
+          });
+          setStage('preview');
+          return;
+        }
+
+        setStepLabel('Running FAIR data contract validation…');
+
+        try {
+          const defaults = {
+            source_mcda: sourceMCDA,
+            ...(temporalYear ? { year: parseInt(temporalYear, 10) } : {}),
+          };
+
+          const valid = [];
+          const errors = [];
+
+          for (let i = 0; i < rawRows.length; i++) {
+            const result = validateRow(rawRows[i], mapping, defaults);
+            if (result.valid) {
+              valid.push(result.record);
+            } else {
+              errors.push({ row: i + 2, errors: result.errors });
+            }
+            if (i % 200 === 0) {
+              setValidationProgress(5 + Math.round((i / rawRows.length) * 40));
+              await new Promise(r => setTimeout(r, 0));
+            }
+          }
+
+          if (valid.length === 0) {
+            throw new Error('All rows failed validation. Please check your mapping and data.');
+          }
+
+          setValidationProgress(50);
+          setStepLabel(`Preparing ${valid.length} records…`);
+
+          const uniqueMap = new Map();
+          for (const record of valid) {
+            const key = `${record.indicator_id}|${record.year}|${record.source_mcda}`;
+            uniqueMap.set(key, record);
+          }
+          const uniqueValid = Array.from(uniqueMap.values());
+          const duplicateCount = valid.length - uniqueValid.length;
+          if (duplicateCount > 0) {
+            toast({
+              title: 'Duplicates removed',
+              description: `${duplicateCount} duplicate records were merged based on unique constraints`,
+              variant: 'warning',
+              duration: 3000,
+            });
+          }
+
+          let inserted = 0;
+          const totalRecords = uniqueValid.length;
+          for (let i = 0; i < totalRecords; i += 500) {
+            const batch = uniqueValid.slice(i, i + 500).map(r => ({
+              ...r,
+              created_by: user.id,
+              is_verified: false,
+            }));
+            const { data, error: insertError } = await supabase
+              .from('indicators')
+              .upsert(batch, { onConflict: 'indicator_id, year, source_mcda' })
+              .select('id');
+            if (insertError) throw insertError;
+            inserted += data?.length || 0;
+            setValidationProgress(50 + Math.round((i + batch.length) / totalRecords * 30));
+          }
+
+          setValidationProgress(85);
+          setStepLabel('Creating ingestion job record…');
+
+          const fairScore = calculateFairScore(uniqueValid[0] || {});
+
+          const { data: job, error: jobError } = await supabase
+            .from('data_ingestion_jobs')
+            .insert({
+              file_name: fileMetadata.file_name,
+              file_type: fileMetadata.file_type,
+              source_mcda: sourceMCDA,
+              upload_type: 'national',
+              status: errors.length > 0 ? 'anomaly' : 'ingested',
+              records_ingested: inserted,
+              validation_errors: errors.length > 0 ? JSON.stringify(errors.slice(0, 50)) : null,
+              sha256_hash: fileMetadata.sha256_hash,
+              spi_assigned: true,
+              framework_name: frameworkName || null,
+              temporal_year: temporalYear ? parseInt(temporalYear, 10) : null,
+              fair_score: fairScore,
+              file_uri: fileMetadata.file_uri,
+              created_by: user.id,
+            })
+            .select()
+            .single();
+
+          if (jobError) throw jobError;
+
+          setValidationProgress(95);
+          setStepLabel('Recording SHA-256 audit lineage…');
+
+          await supabase.from('audit_logs').insert({
+            action: 'upload',
+            user_email: user.email,
+            user_role: user.portal_role,
+            target_entity: 'indicators',
+            target_id: job?.id,
+            details: `Ingested ${inserted} national records from ${fileMetadata.file_name} (${fileMetadata.file_type})`,
+            sha256_hash: fileMetadata.sha256_hash,
+          });
+
+          setValidationProgress(100);
+          setStepLabel('Ingestion complete');
+
+          setIngestionResult({
+            inserted,
+            errors: errors.length,
+            fairScore,
+            sha256: fileMetadata.sha256_hash,
+            spi: job?.spi_assigned ? `KEDIS-SPI-${String(job.id).substring(0, 8)}` : null,
+            errorDetails: errors.slice(0, 50),
+          });
+
+          setStage('done');
+          clearEtlState();
+
+          toast({
+            title: 'National ingestion successful',
+            description: `${inserted} records committed to Sovereign Data Pool`,
+            duration: 3000,
+          });
+
+          loadRecentJobs();
+        } catch (error) {
+          console.error('National ingestion error:', error);
+          toast({
+            title: 'Ingestion failed',
+            description: error.message || 'An unexpected error occurred during ingestion',
+            variant: 'destructive',
+            duration: 3000,
+          });
+          setStage('preview');
+        } finally {
+          setStepLabel('');
+          setValidationProgress(0);
+        }
+        return;
+      }
+
+      // ============================================================
+      // BRANCH 2: COUNTY DATA – Multi-sheet ingestion
+      // ============================================================
+      if (Object.keys(rawRowsBySheet).length === 0) {
+        toast({
+          title: 'No county data found',
+          description: 'Please upload a valid county workbook with sheets.',
+          variant: 'destructive',
+          duration: 3000,
+        });
+        setStage('preview');
+        return;
+      }
+
+      const sheetsToProcess = Object.entries(rawRowsBySheet);
       const totalSheets = sheetsToProcess.length;
 
+      console.log(`📊 Processing ${totalSheets} county sheets...`);
+
+      // Process each sheet
       for (let sIdx = 0; sIdx < totalSheets; sIdx++) {
         const [sheetName, rows] = sheetsToProcess[sIdx];
         setStepLabel(`Healing & Syncing: ${sheetName} (${sIdx + 1}/${totalSheets})...`);
         setValidationProgress(Math.round((sIdx / totalSheets) * 40));
 
-        // 1. Recursive Silo-Healing for the current sheet
+        // Apply Silo-Healing (Forward-Fill) to recover merged headers
         const healedRows = applySiloHealing(rows, 6);
-        
-        // 2. Transform Wide Excel to Long Format (One row per year)
         const validBatch = [];
-        
+
         for (let row of healedRows) {
           try {
             // Auto-tag County Code from sheet name if 3-digits (e.g. "026")
             const sheetCode = sheetName.match(/^(\d{3})/);
-            const county_code = sheetCode ? sheetCode[1] : (row.county_code || '');
+            const countyCode = sheetCode ? sheetCode[1] : (row.county_code || '');
 
-            // Map the indicator name from the mapping
-            const indicatorNameKey = Object.keys(mapping).find(k => mapping[k] === 'indicator_name');
+            // Find Indicator Name from mapping
+            const indicatorNameKey = Object.keys(mapping).find(k => 
+              mapping[k] === 'indicator_name' || mapping[k] === 'name'
+            );
             const indicatorName = indicatorNameKey ? String(row[indicatorNameKey] || '').trim() : '';
             
-            // Skip if no indicator name
             if (!indicatorName) continue;
 
-            // Map other metadata fields
+            // Build base metadata
             const baseRecord = {
               created_by: user.id,
-              source_mcda: sourceMCDA || 'Sovereign Upload',
-              county_code: county_code,
-              name: indicatorName, // Use 'name' not 'indicator_name' for DB column
+              source_mcda: sourceMCDA || 'County Government',
+              county_code: countyCode,
+              name: indicatorName,
               is_verified: true,
-              unit: '',
+              entity_level: countyCode ? 'County' : 'National',
             };
 
-            // Map other metadata using the mapping
+            // Map other metadata fields
             Object.entries(mapping).forEach(([sourceHeader, targetField]) => {
-              if (!targetField || targetField === 'indicator_name') return;
+              if (!targetField || ['indicator_name', 'name', 'year', 'value'].includes(targetField)) return;
               const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
               if (!fieldDef) return;
               
@@ -448,79 +633,45 @@ export default function ETLPipeline() {
               } else {
                 value = String(value || '').trim();
               }
-              // Map to the correct database column name
-              if (targetField === 'indicator_name') return; // Already handled
-              if (targetField === 'county_code') return; // Already handled
-              if (targetField === 'unit') {
-                baseRecord.unit = value || '';
-                return;
-              }
-              // For other fields, use the target field name directly
               baseRecord[targetField] = value;
             });
 
-            // Generate indicator_id
-            const indicatorId = indicatorName
-              .toLowerCase()
-              .replace(/[^a-z0-9]/g, '_')
-              .substring(0, 50) + '_' + (county_code || '000') + '_' + (baseRecord.sub_domain_code || 'gen');
-            baseRecord.indicator_id = indicatorId;
-
-            // Set entity_level based on county_code
-            baseRecord.entity_level = county_code ? 'County' : 'National';
-
-            // 3. CRITICAL FIX: Convert wide format (years as columns) to long format (one row per year)
-            const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h));
+            // --- WIDE-TO-LONG TRANSFORMATION ---
+            // Identify columns that look like years (2013, 2014... 2030)
+            // Uses flexible regex to catch "2024", " 2024", "2024 Actual"
+            const yearColumns = Object.keys(row).filter(h => /\b\d{4}\b/.test(h));
             
             for (const yearKey of yearColumns) {
-              const year = parseInt(yearKey, 10);
-              const rawValue = row[yearKey];
+              const val = sanitizeValue(row[yearKey]);
+              if (val === null) continue; // Skip markers like "...", "-" or empty cells
+
+              const year = parseInt(yearKey.match(/\d{4}/)[0], 10);
               
-              // Skip empty values
-              if (rawValue === undefined || rawValue === null || rawValue === '') continue;
-              
-              const value = normalizeMagnitude(rawValue);
-              // Skip null values (including human markers like "...", "-", "n/a")
-              if (value === null) continue;
-              
-              // Create a record for this year
-              const record = {
+              // Generate a Sovereign Persistent Identifier (SPI) for uniqueness
+              const spi = `${indicatorName.substring(0, 15).replace(/\s+/g, '_').toUpperCase()}_${countyCode || 'KE'}_${year}`;
+
+              validBatch.push({
                 ...baseRecord,
+                indicator_id_spi: spi,
                 year: year,
-                value: value,
-              };
-              
-              // Clean up any fields that shouldn't go to the database
-              delete record.county_name;
-              delete record.subcounty_name;
-              delete record.ward_name;
-              delete record.sub_domain;
-              delete record.domain;
-              delete record.data_breakdown;
-              delete record.indicator_description;
-              
-              validBatch.push(record);
+                value: val,
+              });
             }
-          } catch (e) {
-            console.warn('Row processing error:', e);
-            globalAnomalies.push({ sheet: sheetName, error: e.message });
+          } catch (rowErr) {
+            globalAnomalies.push({ sheet: sheetName, error: "Row transformation failed" });
           }
         }
 
-        // 4. Batch Atomic Upsert to Supabase
+        // Batch Atomic Upsert
         if (validBatch.length > 0) {
-          // Split into chunks of 500 for safety
           for (let i = 0; i < validBatch.length; i += 500) {
             const chunk = validBatch.slice(i, i + 500);
-            const { data, error: upsertError } = await supabase
+            const { error: upsertError } = await supabase
               .from('indicators')
-              .upsert(chunk, { 
-                onConflict: 'indicator_id, year, source_mcda',
-                ignoreDuplicates: false 
-              });
+              .upsert(chunk, { onConflict: 'indicator_id_spi' });
 
             if (upsertError) {
-              console.error(`Sheet ${sheetName} upsert error:`, upsertError);
+              console.error(`Silo Sync Error [${sheetName}]:`, upsertError);
               globalAnomalies.push({ sheet: sheetName, error: upsertError.message });
             } else {
               globalInserted += chunk.length;
@@ -536,19 +687,19 @@ export default function ETLPipeline() {
         await new Promise(r => setTimeout(r, 50));
       }
 
-      // 5. Finalize Job with Anomaly Reporting
+      // Finalize Job with Anomaly Reporting
       const { data: job, error: jobError } = await supabase
         .from('data_ingestion_jobs')
         .insert({
           file_name: fileMetadata?.file_name || 'Unknown',
           file_type: fileMetadata?.file_type || 'XLSX',
-          source_mcda: sourceMCDA || 'Sovereign Upload',
-          status: globalAnomalies.length > 0 ? 'anomaly' : 'ingested',
+          source_mcda: sourceMCDA || 'County Government',
+          upload_type: 'county',
+          status: globalInserted > 0 ? (globalAnomalies.length > 0 ? 'anomaly' : 'ingested') : 'failed',
           records_ingested: globalInserted,
           total_sheets: totalSheets,
           validation_errors: globalAnomalies.length > 0 ? JSON.stringify(globalAnomalies.slice(0, 20)) : null,
           sha256_hash: fileMetadata?.sha256_hash || '',
-          upload_type: uploadType,
           created_by: user.id,
         })
         .select()
@@ -566,7 +717,7 @@ export default function ETLPipeline() {
         user_role: user.portal_role,
         target_entity: 'indicators',
         target_id: job?.id || null,
-        details: `Sovereign Sync: ${globalInserted} records from ${totalSheets} sheets. ${globalAnomalies.length} anomalies.`,
+        details: `Sovereign Sync: ${globalInserted} county records from ${totalSheets} sheets. ${globalAnomalies.length} anomalies.`,
         sha256_hash: fileMetadata?.sha256_hash || '',
       });
 
@@ -582,11 +733,11 @@ export default function ETLPipeline() {
       setStage('done');
       setValidationProgress(100);
       
-      toast({ 
-        title: globalInserted > 0 ? 'Sovereign Sync Complete' : 'Sovereign Sync: No Records', 
+      toast({
+        title: globalInserted > 0 ? 'County Ingestion Successful' : 'No Records Ingested',
         description: globalInserted > 0 
-          ? `Successfully merged ${globalInserted} records. ${globalAnomalies.length} anomalies flagged.` 
-          : `${globalAnomalies.length} anomalies found. No records were ingested. Please check your data.`,
+          ? `${globalInserted} records from ${totalSheets} sheets committed. ${globalAnomalies.length} anomalies flagged.`
+          : `${globalAnomalies.length} anomalies found. Please check your data.`,
         variant: globalInserted > 0 ? 'success' : 'warning',
       });
 
