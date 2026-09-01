@@ -202,7 +202,7 @@ export default function ETLPipeline() {
   };
 
   // -------------------------------------------------------------------------
-  // File Upload Handler
+  // File Upload Handler – Fully Automatic
   // -------------------------------------------------------------------------
   const handleFileSelect = async (selectedFile) => {
     const ext = selectedFile.name.split('.').pop().toUpperCase();
@@ -243,28 +243,20 @@ export default function ETLPipeline() {
       let fileHeaders = [];
       let detectedType = 'national';
       
-      console.log('🔍 Starting file parse...', { ext, fileName: selectedFile.name });
-
       if (ext === 'XLSX') {
         try {
-          // Parse all sheets for county detection - now returns { sheets: {...}, headers: [...] }
+          // Parse all sheets for county detection - returns { sheets: {...}, headers: [...] }
           const countyResult = await parseCountyFile(selectedFile);
-          console.log('📊 parseCountyFile result:', {
-            sheetCount: Object.keys(countyResult.sheets || {}).length,
-            headerCount: countyResult.headers?.length || 0,
-          });
           fileHeaders = countyResult.headers || [];
           setRawRowsBySheet(countyResult.sheets || {});
           // Get first sheet for preview
           const sheetKeys = Object.keys(countyResult.sheets || {});
           if (sheetKeys.length > 0) {
             rows = countyResult.sheets[sheetKeys[0]] || [];
-            console.log(`📄 First sheet "${sheetKeys[0]}" has ${rows.length} rows`);
           }
           detectedType = detectDataFormat(fileHeaders);
-          console.log('🏷️ Detected data format:', detectedType);
         } catch (parseErr) {
-          console.error('❌ County parse fallback:', parseErr);
+          console.warn('County parse fallback:', parseErr);
           rows = await parseFile(selectedFile);
           fileHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
           detectedType = detectDataFormat(fileHeaders);
@@ -277,21 +269,20 @@ export default function ETLPipeline() {
         setRawRowsBySheet({});
       }
 
-      // Set upload type based on detection
+      // Set upload type based on detection – FULLY AUTOMATIC
       const finalUploadType = detectedType === 'county' ? 'county' : 'national';
       setUploadType(finalUploadType);
 
-      console.log('📋 Upload type set to:', finalUploadType);
-      console.log('📋 Headers detected:', fileHeaders);
-
+      // Auto-map everything – NO MANUAL MAPPING REQUIRED
       let autoMapping;
       if (finalUploadType === 'county') {
         autoMapping = autoSuggestMappingCounty(fileHeaders);
-        console.log('📍 County auto-mapping:', autoMapping);
+        // Log the mapping for debugging
+        console.log('County auto-mapping:', autoMapping);
       } else {
         autoMapping = autoSuggestMapping(fileHeaders);
         autoMapping = enhanceMapping(autoMapping, fileHeaders);
-        console.log('📊 National auto-mapping:', autoMapping);
+        console.log('National auto-mapping:', autoMapping);
       }
 
       const sheetCount = Object.keys(rawRowsBySheet).length;
@@ -318,7 +309,7 @@ export default function ETLPipeline() {
         duration: 3000,
       });
     } catch (error) {
-      console.error('❌ File processing error:', error);
+      console.error('File processing error:', error);
       toast({
         title: 'File processing failed',
         description: error.message || 'An unexpected error occurred',
@@ -366,7 +357,7 @@ export default function ETLPipeline() {
   };
 
   // -------------------------------------------------------------------------
-  // Mapping handler
+  // Mapping handler (only used for national data)
   // -------------------------------------------------------------------------
   const handleMappingChange = (sourceHeader, targetField) => {
     setMapping(prev => ({ ...prev, [sourceHeader]: targetField }));
@@ -401,14 +392,9 @@ export default function ETLPipeline() {
   const handleValidateAndIngest = async () => {
     // --- NATIONAL DATA ---
     if (uploadType === 'national') {
-      console.log('🇰🇪 Starting NATIONAL data ingestion...');
       const requiredFields = GLOBAL_SCHEMA_FIELDS.filter(f => f.required);
       const mappedTargets = new Set(Object.values(mapping).filter(Boolean));
       const missingRequired = requiredFields.filter(f => !mappedTargets.has(f.key));
-
-      console.log('📋 National required fields:', requiredFields.map(f => f.key));
-      console.log('📋 Mapped targets:', mappedTargets);
-      console.log('📋 Missing required:', missingRequired.map(f => f.key));
 
       if (missingRequired.length > 0) {
         toast({
@@ -435,7 +421,6 @@ export default function ETLPipeline() {
         const valid = [];
         const errors = [];
 
-        console.log(`📊 Validating ${rawRows.length} national rows...`);
         for (let i = 0; i < rawRows.length; i++) {
           const result = validateRow(rawRows[i], mapping, defaults);
           if (result.valid) {
@@ -449,10 +434,7 @@ export default function ETLPipeline() {
           }
         }
 
-        console.log(`✅ Validation complete: ${valid.length} valid, ${errors.length} errors`);
-
         if (valid.length === 0) {
-          console.error('❌ All rows failed validation. First few errors:', errors.slice(0, 3));
           throw new Error('All rows failed validation. Please check your mapping and data.');
         }
 
@@ -558,7 +540,7 @@ export default function ETLPipeline() {
 
         loadRecentJobs();
       } catch (error) {
-        console.error('❌ National ingestion error:', error);
+        console.error('National ingestion error:', error);
         toast({
           title: 'Ingestion failed',
           description: error.message || 'An unexpected error occurred during ingestion',
@@ -573,31 +555,11 @@ export default function ETLPipeline() {
       return;
     }
 
-    // --- COUNTY DATA ---
-    console.log('🌍 Starting COUNTY DATA ingestion...');
-    // Use rawRowsBySheet for county data
+    // --- COUNTY DATA – FULLY AUTOMATIC ---
     if (Object.keys(rawRowsBySheet).length === 0) {
       toast({
         title: 'No county data found',
         description: 'Please upload a valid county workbook with sheets.',
-        variant: 'destructive',
-        duration: 3000,
-      });
-      return;
-    }
-
-    const countyRequiredFields = COUNTY_SCHEMA_FIELDS.filter(f => f.required);
-    const mappedTargets = new Set(Object.values(mapping).filter(Boolean));
-    const missingRequired = countyRequiredFields.filter(f => !mappedTargets.has(f.key));
-
-    console.log('📋 County required fields:', countyRequiredFields.map(f => f.key));
-    console.log('📋 Mapped targets:', mappedTargets);
-    console.log('📋 Missing required:', missingRequired.map(f => f.key));
-
-    if (missingRequired.length > 0) {
-      toast({
-        title: 'County mapping incomplete',
-        description: `Required fields not mapped: ${missingRequired.map(f => f.label).join(', ')}`,
         variant: 'destructive',
         duration: 3000,
       });
@@ -623,9 +585,7 @@ export default function ETLPipeline() {
       const allValidRecords = [];
       const allErrors = [];
 
-      console.log(`📊 Processing ${totalSheets} sheets...`);
-
-      // Process each sheet
+      // Process each sheet – FULLY AUTOMATIC
       for (const sheetName of sheetNames) {
         const sheetRows = rawRowsBySheet[sheetName] || [];
         processedSheets++;
@@ -633,12 +593,9 @@ export default function ETLPipeline() {
         setStepLabel(`Processing sheet ${processedSheets} of ${totalSheets} (${sheetName})…`);
         setValidationProgress(5 + Math.round((processedSheets / totalSheets) * 40));
 
-        console.log(`📄 Processing sheet ${processedSheets}/${totalSheets}: "${sheetName}" (${sheetRows.length} rows)`);
-
         // Auto-extract county_code from sheet name if it matches 3-digit code
         const sheetCode = sheetName.match(/^(\d{3})/);
         if (sheetCode) {
-          console.log(`🔢 Auto-detected county_code: ${sheetCode[1]} from sheet name "${sheetName}"`);
           for (const row of sheetRows) {
             if (!row.county_code) {
               row.county_code = sheetCode[1];
@@ -646,41 +603,27 @@ export default function ETLPipeline() {
           }
         }
 
-        let sheetValidCount = 0;
-        let sheetErrorCount = 0;
-
         for (const row of sheetRows) {
-          console.log('🔍 Row being validated:', row);
-          console.log('📋 Mapping being used:', mapping);
           const result = validateCountyRow(row, mapping, defaults);
-          console.log('✅ Validation result:', result);
-          
           if (result.valid) {
             allValidRecords.push(result.record);
-            sheetValidCount++;
           } else {
             allErrors.push({ sheet: sheetName, errors: result.errors });
-            sheetErrorCount++;
-            console.warn(`⚠️ Row validation failed:`, result.errors);
           }
         }
-
-        console.log(`📊 Sheet "${sheetName}" summary: ${sheetValidCount} valid, ${sheetErrorCount} errors`);
 
         await new Promise(r => setTimeout(r, 50));
       }
 
-      console.log(`📊 All sheets processed: ${allValidRecords.length} valid, ${allErrors.length} errors`);
-
       if (allValidRecords.length === 0) {
-        console.error('❌ All rows failed validation. First few errors:', allErrors.slice(0, 3));
-        throw new Error('All rows failed validation. Please check your county data and mapping.');
+        console.error('All rows failed validation. Errors:', allErrors.slice(0, 5));
+        throw new Error('All rows failed validation. Please check your county data.');
       }
 
       setValidationProgress(50);
       setStepLabel(`Transforming ${allValidRecords.length} county records…`);
 
-      // Transform records (expand years)
+      // Transform records (expand years) – FULLY AUTOMATIC
       const transformedRecords = [];
       for (const record of allValidRecords) {
         const rowWithYears = { ...record };
@@ -693,8 +636,6 @@ export default function ETLPipeline() {
         transformedRecords.push(...transformed);
       }
 
-      console.log(`📊 Transformed into ${transformedRecords.length} year-expanded records`);
-
       if (transformedRecords.length === 0) {
         throw new Error('No valid year values found in the county data.');
       }
@@ -704,8 +645,7 @@ export default function ETLPipeline() {
 
       const user = await supabaseAuth.me();
 
-      // Create ingestion job first
-      console.log('📝 Creating ingestion job...');
+      // Create ingestion job
       const { data: job, error: jobError } = await supabase
         .from('data_ingestion_jobs')
         .insert({
@@ -729,11 +669,7 @@ export default function ETLPipeline() {
         .select()
         .single();
 
-      if (jobError) {
-        console.error('❌ Job creation error:', jobError);
-        throw jobError;
-      }
-      console.log(`✅ Ingestion job created: ${job.id}`);
+      if (jobError) throw jobError;
 
       // Batch insert records with job_id
       let inserted = 0;
@@ -746,25 +682,18 @@ export default function ETLPipeline() {
           ingestion_job_id: job.id,
           source_mcda: sourceMCDA || 'County Government',
         }));
-        console.log(`📥 Inserting batch ${Math.floor(i/500)+1}/${Math.ceil(totalRecords/500)} (${batch.length} records)`);
         const { data, error: insertError } = await supabase
           .from('indicators')
           .upsert(batch, { onConflict: 'indicator_id, year, source_mcda, county_code' })
           .select('id');
-        if (insertError) {
-          console.error('❌ Batch insert error:', insertError);
-          throw insertError;
-        }
+        if (insertError) throw insertError;
         inserted += data?.length || 0;
         setValidationProgress(70 + Math.round((i + batch.length) / totalRecords * 25));
       }
 
-      console.log(`✅ Inserted ${inserted} records`);
-
       setValidationProgress(95);
       setStepLabel('Recording audit lineage…');
 
-      // Update job status
       await supabase
         .from('data_ingestion_jobs')
         .update({
@@ -808,7 +737,7 @@ export default function ETLPipeline() {
 
       loadRecentJobs();
     } catch (error) {
-      console.error('❌ County ingestion error:', error);
+      console.error('County ingestion error:', error);
       toast({
         title: 'County ingestion failed',
         description: error.message || 'An unexpected error occurred during county ingestion',
@@ -962,10 +891,6 @@ export default function ETLPipeline() {
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
                       {Object.values(mapping).filter(v => v).length} of {headers.length} headers automatically mapped.
-                      <br />
-                      <span className="font-mono text-primary">
-                        {Object.entries(mapping).filter(([, v]) => v).map(([k, v]) => `${k} → ${v}`).join(' · ')}
-                      </span>
                     </p>
                     {uploadType === 'county' && Object.keys(rawRowsBySheet).length > 0 && (
                       <p className="text-xs text-primary mt-1">
@@ -977,14 +902,35 @@ export default function ETLPipeline() {
 
                 <ETLDataPreview rows={rawRows} headers={headers} fileName={fileMetadata.file_name} />
 
-                {/* NEW: ETLMappingPanel with schema prop */}
-                <ETLMappingPanel
-                  headers={headers}
-                  mapping={mapping}
-                  onMappingChange={handleMappingChange}
-                  onAutoMap={handleAutoMap}
-                  schema={uploadType} // 'national' or 'county'
-                />
+                {/* Mapping Panel – Only for National Data */}
+                {uploadType === 'national' && (
+                  <ETLMappingPanel
+                    headers={headers}
+                    mapping={mapping}
+                    onMappingChange={handleMappingChange}
+                    onAutoMap={handleAutoMap}
+                    schema={uploadType}
+                  />
+                )}
+
+                {/* County Data – Show Auto-Mapping Summary */}
+                {uploadType === 'county' && (
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                    <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <Database className="h-4 w-4 text-primary" />
+                      County Data Auto‑Mapping Summary
+                    </h4>
+                    <div className="mt-2 grid grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+                      {Object.entries(mapping).filter(([, v]) => v).map(([k, v]) => (
+                        <div key={k} className="flex items-center gap-1">
+                          <span className="text-muted-foreground truncate max-w-[100px]">{k}</span>
+                          <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <span className="text-primary font-medium truncate max-w-[100px]">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-3">
                   <button onClick={() => setStage('upload')} className="rounded-xl border border-border bg-card px-5 py-2.5 text-sm font-semibold hover:bg-secondary">
