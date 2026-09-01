@@ -381,7 +381,7 @@ export default function ETLPipeline() {
   }, []);
 
   // =========================================================================
-  // RECURSIVE INGESTION ENGINE (v14 Fail-Proof)
+  // RECURSIVE INGESTION ENGINE (v14 Fail-Proof - FIXED)
   // =========================================================================
   const handleValidateAndIngest = async () => {
     setStage('validating');
@@ -408,7 +408,7 @@ export default function ETLPipeline() {
         // 1. Recursive Silo-Healing for the current sheet
         const healedRows = applySiloHealing(rows, 6);
         
-        // 2. Transform Wide Excel to Unified Master Pool
+        // 2. Transform Wide Excel to Long Format (One row per year)
         const validBatch = [];
         
         for (let row of healedRows) {
@@ -419,18 +419,22 @@ export default function ETLPipeline() {
 
             // Map the indicator name from the mapping
             const indicatorNameKey = Object.keys(mapping).find(k => mapping[k] === 'indicator_name');
-            const indicatorName = indicatorNameKey ? row[indicatorNameKey] : '';
+            const indicatorName = indicatorNameKey ? String(row[indicatorNameKey] || '').trim() : '';
+            
+            // Skip if no indicator name
+            if (!indicatorName) continue;
 
-            // Construct standardized record
-            const record = {
+            // Map other metadata fields
+            const baseRecord = {
               created_by: user.id,
               source_mcda: sourceMCDA || 'Sovereign Upload',
               county_code: county_code,
-              indicator_name: indicatorName,
+              name: indicatorName, // Use 'name' not 'indicator_name' for DB column
               is_verified: true,
+              unit: '',
             };
 
-            // Map other metadata fields using the mapping object
+            // Map other metadata using the mapping
             Object.entries(mapping).forEach(([sourceHeader, targetField]) => {
               if (!targetField || targetField === 'indicator_name') return;
               const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -442,33 +446,64 @@ export default function ETLPipeline() {
               } else if (fieldDef.type === 'number') {
                 value = normalizeMagnitude(value);
               } else {
-                value = String(value).trim();
+                value = String(value || '').trim();
               }
-              record[targetField] = value;
-            });
-
-            // 3. Fail-Proof Year Mapping: Dynamically ingest 2013-2030 columns
-            Object.keys(row).forEach(header => {
-              if (/^\d{4}$/.test(header)) { // If it looks like a year
-                record[header] = normalizeMagnitude(row[header]);
+              // Map to the correct database column name
+              if (targetField === 'indicator_name') return; // Already handled
+              if (targetField === 'county_code') return; // Already handled
+              if (targetField === 'unit') {
+                baseRecord.unit = value || '';
+                return;
               }
+              // For other fields, use the target field name directly
+              baseRecord[targetField] = value;
             });
 
             // Generate indicator_id
-            if (record.indicator_name) {
-              const indicatorId = record.indicator_name
-                .toLowerCase()
-                .replace(/[^a-z0-9]/g, '_')
-                .substring(0, 50) + '_' + (county_code || '000') + '_' + (record.sub_domain_code || 'gen');
-              record.indicator_id = indicatorId;
-            }
+            const indicatorId = indicatorName
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, '_')
+              .substring(0, 50) + '_' + (county_code || '000') + '_' + (baseRecord.sub_domain_code || 'gen');
+            baseRecord.indicator_id = indicatorId;
 
-            // CRITICAL CHECK: Only ingest if we have at least an indicator name
-            if (record.indicator_name) {
+            // Set entity_level based on county_code
+            baseRecord.entity_level = county_code ? 'County' : 'National';
+
+            // 3. CRITICAL FIX: Convert wide format (years as columns) to long format (one row per year)
+            const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h));
+            
+            for (const yearKey of yearColumns) {
+              const year = parseInt(yearKey, 10);
+              const rawValue = row[yearKey];
+              
+              // Skip empty values
+              if (rawValue === undefined || rawValue === null || rawValue === '') continue;
+              
+              const value = normalizeMagnitude(rawValue);
+              // Skip null values (including human markers like "...", "-", "n/a")
+              if (value === null) continue;
+              
+              // Create a record for this year
+              const record = {
+                ...baseRecord,
+                year: year,
+                value: value,
+              };
+              
+              // Clean up any fields that shouldn't go to the database
+              delete record.county_name;
+              delete record.subcounty_name;
+              delete record.ward_name;
+              delete record.sub_domain;
+              delete record.domain;
+              delete record.data_breakdown;
+              delete record.indicator_description;
+              
               validBatch.push(record);
             }
           } catch (e) {
-            globalAnomalies.push({ sheet: sheetName, error: "Row format error" });
+            console.warn('Row processing error:', e);
+            globalAnomalies.push({ sheet: sheetName, error: e.message });
           }
         }
 
@@ -477,7 +512,7 @@ export default function ETLPipeline() {
           // Split into chunks of 500 for safety
           for (let i = 0; i < validBatch.length; i += 500) {
             const chunk = validBatch.slice(i, i + 500);
-            const { error: upsertError } = await supabase
+            const { data, error: upsertError } = await supabase
               .from('indicators')
               .upsert(chunk, { 
                 onConflict: 'indicator_id, year, source_mcda',
@@ -485,16 +520,20 @@ export default function ETLPipeline() {
               });
 
             if (upsertError) {
-              console.error(`Sheet ${sheetName} failure:`, upsertError);
+              console.error(`Sheet ${sheetName} upsert error:`, upsertError);
               globalAnomalies.push({ sheet: sheetName, error: upsertError.message });
             } else {
               globalInserted += chunk.length;
+              console.log(`✅ Inserted ${chunk.length} records from ${sheetName}`);
             }
           }
+        } else {
+          console.warn(`⚠️ No valid records found in sheet: ${sheetName}`);
+          globalAnomalies.push({ sheet: sheetName, error: 'No valid records found' });
         }
 
         setValidationProgress(40 + Math.round(((sIdx + 1) / totalSheets) * 60));
-        await new Promise(r => setTimeout(r, 50)); // UI smoothness
+        await new Promise(r => setTimeout(r, 50));
       }
 
       // 5. Finalize Job with Anomaly Reporting
@@ -537,15 +576,18 @@ export default function ETLPipeline() {
         spi: job?.id ? `KEDIS-SPI-${job.id.substring(0, 8).toUpperCase()}` : 'SPI-PENDING',
         sha256: fileMetadata?.sha256_hash || '',
         errorDetails: globalAnomalies.slice(0, 50),
-        fairScore: 85,
+        fairScore: globalInserted > 0 ? 85 : 0,
       });
 
       setStage('done');
       setValidationProgress(100);
       
       toast({ 
-        title: 'Sovereign Sync Complete', 
-        description: `Successfully merged ${globalInserted} records. ${globalAnomalies.length} anomalies flagged.` 
+        title: globalInserted > 0 ? 'Sovereign Sync Complete' : 'Sovereign Sync: No Records', 
+        description: globalInserted > 0 
+          ? `Successfully merged ${globalInserted} records. ${globalAnomalies.length} anomalies flagged.` 
+          : `${globalAnomalies.length} anomalies found. No records were ingested. Please check your data.`,
+        variant: globalInserted > 0 ? 'success' : 'warning',
       });
 
       loadRecentJobs();
