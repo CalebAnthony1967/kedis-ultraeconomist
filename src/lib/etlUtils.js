@@ -223,7 +223,7 @@ export async function parseFile(file) {
  * government spreadsheet exports. Also normalizes string magnitudes.
  */
 export function applySiloHealing(rows, fillColumns = 4) {
-  if (rows.length === 0) return rows;
+  if (!rows || rows.length === 0) return rows || [];
   const headers = Object.keys(rows[0]);
   const fillHeaders = headers.slice(0, fillColumns);
 
@@ -372,12 +372,15 @@ export function calculateFairScore(record) {
 // ---------------------------------------------------------------------------
 
 function normalizeHeader(header) {
+  if (!header) return '';
   return header.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 export function autoSuggestMapping(headers) {
   const mapping = {};
   const usedTargets = new Set();
+
+  if (!headers || headers.length === 0) return mapping;
 
   for (const header of headers) {
     const normalized = normalizeHeader(header);
@@ -526,6 +529,8 @@ export function autoSuggestMappingCounty(headers) {
   const mapping = {};
   const usedTargets = new Set();
 
+  if (!headers || headers.length === 0) return mapping;
+
   for (const header of headers) {
     const normalized = normalizeHeader(header);
     let bestMatch = null;
@@ -561,6 +566,7 @@ export function autoSuggestMappingCounty(headers) {
 // ---------------------------------------------------------------------------
 
 export function detectDataFormat(headers) {
+  if (!headers || headers.length === 0) return 'national';
   const countyIndicators = ['county_code', 'county_name', 'subcounty_code', 'ward_code'];
   const lowerHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
   const isCounty = countyIndicators.some(col => lowerHeaders.includes(col));
@@ -574,6 +580,8 @@ export function detectDataFormat(headers) {
 export function validateCountyRow(row, mapping, defaults = {}) {
   const record = {};
   const errors = [];
+
+  if (!row) return { valid: false, record: {}, errors: ['Empty row provided'] };
 
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
@@ -620,6 +628,8 @@ export function validateCountyRow(row, mapping, defaults = {}) {
 
 export async function transformCountyRow(row, mapping, defaults = {}, domainResolver) {
   const baseRecord = {};
+  if (!row) return [];
+
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -824,16 +834,29 @@ export async function parseCountyFile(file) {
 
     // Apply silo-healing per sheet
     const healedRows = applySiloHealing(sheetRows, 4);
-    sheets[sheetName] = healedRows;
-
-    // Capture headers from the first non-empty sheet
-    if (allHeaders.length === 0 && healedRows.length > 0) {
-      allHeaders = Object.keys(healedRows[0]);
+    if (healedRows && healedRows.length > 0) {
+      sheets[sheetName] = healedRows;
+      // Capture headers from the first non-empty sheet
+      if (allHeaders.length === 0) {
+        allHeaders = Object.keys(healedRows[0]);
+      }
+    } else {
+      sheets[sheetName] = [];
     }
   }
 
   if (Object.keys(sheets).length === 0) {
     throw new Error('No data found in any sheet.');
+  }
+
+  // If no headers were found, try to get them from the first non-empty sheet
+  if (allHeaders.length === 0) {
+    for (const sheetName of Object.keys(sheets)) {
+      if (sheets[sheetName] && sheets[sheetName].length > 0) {
+        allHeaders = Object.keys(sheets[sheetName][0]);
+        break;
+      }
+    }
   }
 
   return { sheets, headers: allHeaders };
