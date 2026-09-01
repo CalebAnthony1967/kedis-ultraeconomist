@@ -450,9 +450,9 @@ export const COUNTY_SCHEMA_FIELDS = [
   { key: 'link_to_sdg', label: 'Link to SDG', type: 'string', required: false },
 ];
 
-// ============================================================================
+// ---------------------------------------------------------------------------
 // STRICT COUNTY HEADER ALIASES – Exact match for your column names
-// ============================================================================
+// ---------------------------------------------------------------------------
 
 const COUNTY_HEADER_ALIASES = {
   // Geography – Exact match from your dataset
@@ -489,6 +489,57 @@ const COUNTY_HEADER_ALIASES = {
   link_to_sdg: ['Link_to_SDG', 'LinkToSDG', 'link_to_sdg', 'linktosdg', 'Link to SDG', 'sdg', 'SDG'],
 };
 
+// ============================================================================
+// NEW: Pillar Enum Mapping Function
+// ============================================================================
+
+/**
+ * Maps county pillar values to valid PostgreSQL enum values for the 'pillar' column.
+ * 
+ * County pillar values in the dataset:
+ * - "Foundations/Infrastructure Pillar" → "Governance"
+ * - "Social Pillar" → "Social"
+ * - "Economic Pillar" → "Economic"
+ * - "Governance/Enablers Pillar" → "Governance"
+ * - "Environment Pillar" → "Environmental"
+ * - "Political Pillar" → "Political"
+ */
+export function mapCountyPillarToEnum(countyPillar) {
+  if (!countyPillar || typeof countyPillar !== 'string') return null;
+  
+  // Trim and clean the input
+  const cleaned = countyPillar.trim();
+  
+  // Exact matches (case-sensitive)
+  const exactMap = {
+    'Foundations/Infrastructure Pillar': 'Governance',
+    'Foundations/Infrastructure': 'Governance',
+    'Infrastructure Pillar': 'Governance',
+    'Social Pillar': 'Social',
+    'Economic Pillar': 'Economic',
+    'Governance/Enablers Pillar': 'Governance',
+    'Governance Pillar': 'Governance',
+    'Environmental Pillar': 'Environmental',
+    'Political Pillar': 'Political',
+  };
+  
+  if (exactMap[cleaned]) return exactMap[cleaned];
+  
+  // Case-insensitive partial matches
+  const lower = cleaned.toLowerCase();
+  if (lower.includes('economic')) return 'Economic';
+  if (lower.includes('social')) return 'Social';
+  if (lower.includes('governance')) return 'Governance';
+  if (lower.includes('enablers')) return 'Governance';
+  if (lower.includes('infrastructure')) return 'Governance';
+  if (lower.includes('foundations')) return 'Governance';
+  if (lower.includes('environmental')) return 'Environmental';
+  if (lower.includes('political')) return 'Political';
+  
+  // If nothing matches, return null (will be set to NULL in DB)
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Auto-Mapping for County – Strict alignment
 // ---------------------------------------------------------------------------
@@ -509,21 +560,17 @@ export function autoSuggestMappingCounty(headers) {
     for (const [target, aliases] of Object.entries(COUNTY_HEADER_ALIASES)) {
       if (usedTargets.has(target)) continue;
       
-      // Check each alias
       for (const alias of aliases) {
-        // Exact match (case-sensitive first, then case-insensitive)
         if (trimmedHeader === alias) {
           bestMatch = target;
           matchScore = 3;
           break;
         }
-        // Case-insensitive exact match
         if (trimmedHeader.toLowerCase() === alias.toLowerCase()) {
           bestMatch = target;
           matchScore = 2;
           break;
         }
-        // Contains match
         if (trimmedHeader.length > 2 && alias.length > 2) {
           const headerLower = trimmedHeader.toLowerCase();
           const aliasLower = alias.toLowerCase();
@@ -538,9 +585,8 @@ export function autoSuggestMappingCounty(headers) {
       if (matchScore === 3) break;
     }
 
-    // Special handling for year columns (2013-2030)
     if (!bestMatch && /^\d{4}$/.test(trimmedHeader)) {
-      bestMatch = ''; // Year columns are handled separately
+      bestMatch = '';
     }
 
     mapping[header] = bestMatch || '';
@@ -558,17 +604,14 @@ export function autoSuggestMappingCounty(headers) {
 export function detectDataFormat(headers) {
   if (!headers || headers.length === 0) return 'national';
   
-  // List of county-specific column names (exact matches)
   const countyColumns = [
     'County_Code', 'County_Name', 'SubCounty_Code', 'SubCounty_Name',
     'Ward_Code', 'Ward_Name'
   ];
   
-  // Check if any county column exists in headers
   const headerSet = new Set(headers.map(h => h.trim()));
   const hasCountyColumn = countyColumns.some(col => headerSet.has(col));
   
-  // Also check case-insensitive
   const headerLowerSet = new Set(headers.map(h => h.trim().toLowerCase()));
   const hasCountyLower = countyColumns.some(col => headerLowerSet.has(col.toLowerCase()));
   
@@ -587,7 +630,6 @@ export function validateCountyRow(row, mapping, defaults = {}) {
 
   if (!row) return { valid: false, record: {}, errors: ['Empty row provided'] };
 
-  // Map all fields
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -604,7 +646,6 @@ export function validateCountyRow(row, mapping, defaults = {}) {
     record[targetField] = value;
   }
 
-  // Apply defaults
   for (const [key, value] of Object.entries(defaults)) {
     if (value !== undefined && value !== null && value !== '' &&
         (record[key] === undefined || record[key] === null || record[key] === '')) {
@@ -612,12 +653,10 @@ export function validateCountyRow(row, mapping, defaults = {}) {
     }
   }
 
-  // Only require indicator_name
   if (!record.indicator_name || record.indicator_name === '') {
     errors.push('Missing required field: Indicator Name');
   }
 
-  // Validate county_code format
   if (record.county_code && !/^\d{3}$/.test(record.county_code)) {
     errors.push(`Invalid county_code format: ${record.county_code}. Expected 3 digits.`);
   }
@@ -633,7 +672,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
   const baseRecord = {};
   if (!row) return [];
 
-  // Map all fields
   for (const [sourceHeader, targetField] of Object.entries(mapping)) {
     if (!targetField || row[sourceHeader] === undefined) continue;
     const fieldDef = COUNTY_SCHEMA_FIELDS.find(f => f.key === targetField);
@@ -649,7 +687,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     baseRecord[targetField] = value;
   }
 
-  // Apply defaults
   for (const [key, value] of Object.entries(defaults)) {
     if (value !== undefined && value !== null && value !== '' &&
         (baseRecord[key] === undefined || baseRecord[key] === null || baseRecord[key] === '')) {
@@ -657,7 +694,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     }
   }
 
-  // Generate indicator_id
   const indicatorName = baseRecord.indicator_name || 'unknown';
   const countyCode = baseRecord.county_code || '000';
   const subDomainCode = baseRecord.sub_domain_code || 'gen';
@@ -668,7 +704,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
 
   baseRecord.indicator_id = indicatorId;
 
-  // Resolve domain/subdomain
   let subdomainId = null;
   if (baseRecord.sub_domain_code && domainResolver) {
     try {
@@ -682,7 +717,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
     }
   }
 
-  // Identify year columns (2013-2030)
   const yearColumns = Object.keys(row).filter(h => /^\d{4}$/.test(h));
   const records = [];
 
@@ -701,7 +735,6 @@ export async function transformCountyRow(row, mapping, defaults = {}, domainReso
       subdomain_id: subdomainId,
     };
 
-    // Clean up temporary fields
     delete record.domain;
     delete record.sub_domain;
     delete record.sub_domain_code;
@@ -851,7 +884,6 @@ export async function parseCountyFile(file) {
 
     if (sheetRows.length === 0) continue;
 
-    // Apply silo-healing per sheet
     const healedRows = applySiloHealing(sheetRows, 6);
     if (healedRows && healedRows.length > 0) {
       sheets[sheetName] = healedRows;
@@ -887,7 +919,6 @@ export function normalizeMagnitude(value) {
   if (value === null || value === undefined || value === '') return null;
   let str = String(value).trim().toLowerCase();
   
-  // Human markers
   const markers = ['...', '-', 'n/a', 'nil', 'tbd', 'none', 'nan', 'pending', 'unknown', 'not available'];
   if (markers.includes(str)) return null;
 
