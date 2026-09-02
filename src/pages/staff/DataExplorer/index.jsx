@@ -614,7 +614,7 @@ export default function DataExplorer() {
                       {detectedIntent}
                     </span>
                   )}
-                  {missingEntities.length > 0 && (
+                  {missingEntities && missingEntities.length > 0 && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1">
                       <AlertCircle className="h-2.5 w-2.5" />
                       {missingEntities.length} missing
@@ -658,9 +658,9 @@ export default function DataExplorer() {
                   {showInsights && (
                     <InsightsPanel
                       data={displayIndicators}
-                      citations={citations}
-                      confidence={aiConfidence}
-                      missingEntities={missingEntities}
+                      citations={citations || []}
+                      confidence={aiConfidence || 0.5}
+                      missingEntities={missingEntities || []}
                       detectedGeography={detectedGeography}
                       detectedIntent={detectedIntent}
                       onGenerate={handleAIChatInsights}
