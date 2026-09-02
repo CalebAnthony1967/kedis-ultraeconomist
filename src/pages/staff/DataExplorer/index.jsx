@@ -8,6 +8,7 @@ import ControlBar from './components/ControlBar';
 import FilterDrawer from './components/FilterDrawer';
 import ChartView from './components/ChartView';
 import EntityLevelSelector from './components/EntityLevelSelector';
+import { getEntityLevelCounts } from '@/lib/explorerAPI';
 import {
   Database,
   Loader2,
@@ -40,19 +41,10 @@ export default function DataExplorer() {
   const [viewMode, setViewMode] = useState('card');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedIndicatorId, setSelectedIndicatorId] = useState(null);
-  const [chartData, setChartData] = useState([]);
-
-  // Entity level options
-  const entityLevelOptions = [
-    { value: 'all', label: lang === 'sw' ? 'Zote' : 'All Levels' },
-    { value: 'National', label: lang === 'sw' ? 'Taifa' : 'National' },
-    { value: 'County', label: lang === 'sw' ? 'Kaunti' : 'County' },
-    { value: 'Sub-County', label: lang === 'sw' ? 'Tarafa' : 'Sub-County' },
-    { value: 'Ward', label: lang === 'sw' ? 'Wadi' : 'Ward' },
-  ];
-
-  // Entity level filter state
   const [selectedEntityLevel, setSelectedEntityLevel] = useState('all');
+
+  // Entity level counts
+  const entityCounts = getEntityLevelCounts(results);
 
   // Initial search on load
   useEffect(() => {
@@ -117,14 +109,6 @@ export default function DataExplorer() {
   const currentPage = Math.floor(filters.offset / filters.limit) + 1;
   const totalPages = Math.ceil(totalCount / filters.limit);
 
-  // Count by entity level for summary
-  const entityCounts = {
-    National: results.filter(r => r.entity_level === 'National').length,
-    County: results.filter(r => r.entity_level === 'County').length,
-    SubCounty: results.filter(r => r.entity_level === 'Sub-County').length,
-    Ward: results.filter(r => r.entity_level === 'Ward').length,
-  };
-
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Header */}
@@ -147,31 +131,19 @@ export default function DataExplorer() {
             </div>
           </div>
 
-          {/* Entity Level Filter - National vs County */}
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground">
-              {lang === 'sw' ? 'Kiwango:' : 'Level:'}
-            </span>
-            <div className="flex gap-1">
-              {entityLevelOptions.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setSelectedEntityLevel(option.value)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all
-                    ${selectedEntityLevel === option.value
-                      ? 'bg-primary text-primary-foreground shadow-sm'
-                      : 'bg-secondary/50 text-muted-foreground hover:bg-secondary'
-                    }`}
-                >
-                  {option.label}
-                  {option.value !== 'all' && (
-                    <span className="ml-1.5 text-[10px] opacity-70">
-                      ({entityCounts[option.value] || 0})
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+          {/* Entity Level Filter */}
+          <div className="mt-3">
+            <EntityLevelSelector
+              selected={selectedEntityLevel}
+              onChange={(level) => {
+                setSelectedEntityLevel(level);
+                const entityLevels = level === 'all' 
+                  ? ['National', 'County', 'Sub-County', 'Ward']
+                  : [level];
+                updateFilter('entityLevels', entityLevels);
+              }}
+              counts={entityCounts}
+            />
           </div>
         </div>
       </div>
@@ -309,7 +281,8 @@ export default function DataExplorer() {
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium
                                     ${indicator.entity_level === 'National' ? 'bg-primary/10 text-primary' :
                                       indicator.entity_level === 'County' ? 'bg-emerald-500/10 text-emerald-600' :
-                                      'bg-amber-500/10 text-amber-600'}`}
+                                      indicator.entity_level === 'Sub-County' ? 'bg-amber-500/10 text-amber-600' :
+                                      'bg-purple-500/10 text-purple-600'}`}
                                   >
                                     {indicator.entity_level || 'National'}
                                   </span>
