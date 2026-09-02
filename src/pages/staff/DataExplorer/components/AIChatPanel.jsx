@@ -4,7 +4,6 @@ import { useLanguage } from '@/lib/i18n';
 import { runRAG } from '@/lib/ai/rag';
 import { saveConversation } from '@/lib/ai/memory';
 import { useToast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/supabase/client';
 
 export default function AIChatPanel({
   currentFilters,
@@ -18,11 +17,11 @@ export default function AIChatPanel({
   conversations,
   loadConversationsList,
   saveStructuredTurn,
+  confidence = null,
+  missingEntities = [],
   className = '',
-  lang: propLang,
 }) {
-  const { lang: contextLang } = useLanguage();
-  const lang = propLang || contextLang;
+  const { lang } = useLanguage();
   const { toast } = useToast();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -79,9 +78,7 @@ export default function AIChatPanel({
         const saved = await saveConversation(null, [], title, lang || 'en', 'Data Explorer');
         convId = saved.id;
         setConversationId(convId);
-        if (loadConversationsList) {
-          loadConversationsList();
-        }
+        loadConversationsList();
       }
 
       // Run RAG with streaming
@@ -97,12 +94,12 @@ export default function AIChatPanel({
       });
 
       // Store classification for follow-ups
-      if (result.classification && setLastClassification) {
+      if (result.classification) {
         setLastClassification(result.classification);
       }
 
       // Save structured turn
-      if (convId && saveStructuredTurn) {
+      if (convId) {
         await saveStructuredTurn({
           query: input,
           classification: result.classification,
@@ -159,9 +156,12 @@ export default function AIChatPanel({
         });
       }
 
-      if (loadConversationsList) {
-        loadConversationsList();
+      // Apply filters if AI suggests geography
+      if (result.classification?.geography?.type === 'county' && result.classification?.geography?.code) {
+        // We could auto-apply here, but let the user decide
       }
+
+      loadConversationsList();
 
     } catch (error) {
       console.error('Chat error:', error);
@@ -199,12 +199,8 @@ export default function AIChatPanel({
           : '👋 New conversation! I\'m AlphaEconomist. Ask your question.',
       },
     ]);
-    if (setConversationId) {
-      setConversationId(null);
-    }
-    if (setLastClassification) {
-      setLastClassification(null);
-    }
+    setConversationId(null);
+    setLastClassification(null);
     setInput('');
     setShowHistory(false);
     toast({
@@ -213,14 +209,6 @@ export default function AIChatPanel({
       duration: 2000,
     });
   };
-
-  // Get the latest message for confidence display
-  const getLatestConfidence = () => {
-    const lastMsg = messages[messages.length - 1];
-    return lastMsg?.confidence || null;
-  };
-
-  const latestConfidence = getLatestConfidence();
 
   // Render message with rich formatting
   const renderMessage = (content, citations = [], classification = null, confidence = null, missingEntities = []) => {
@@ -252,16 +240,15 @@ export default function AIChatPanel({
           <span className="text-[10px] text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded-full">
             AI Assistant
           </span>
-          {/* Confidence badge - using latestConfidence */}
-          {latestConfidence !== null && latestConfidence !== undefined && (
+          {/* Confidence badge */}
+          {confidence !== undefined && confidence !== null && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1
-              ${latestConfidence >= 0.7 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
-                latestConfidence >= 0.4 ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
+              ${confidence >= 0.7 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                confidence >= 0.4 ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
                 'bg-red-500/10 text-red-600 border-red-500/20'
               }`}
             >
-              <CheckCircle2 className="h-2.5 w-2.5" />
-              {Math.round(latestConfidence * 100)}%
+              {Math.round(confidence * 100)}%
             </span>
           )}
         </div>
@@ -304,10 +291,10 @@ export default function AIChatPanel({
               {lastClassification.intent}
             </span>
           )}
-          {lastClassification?.missing_entities && lastClassification.missing_entities.length > 0 && (
+          {missingEntities && missingEntities.length > 0 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1">
               <AlertCircle className="h-2.5 w-2.5" />
-              {lastClassification.missing_entities.length} missing
+              {missingEntities.length} missing
             </span>
           )}
         </div>
@@ -349,9 +336,7 @@ export default function AIChatPanel({
                     onClick={async () => {
                       try {
                         await supabase.from('copilot_conversations').delete().eq('id', conv.id);
-                        if (loadConversationsList) {
-                          loadConversationsList();
-                        }
+                        loadConversationsList();
                       } catch (e) {
                         console.warn('Delete failed:', e);
                       }
