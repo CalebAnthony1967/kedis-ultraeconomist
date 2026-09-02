@@ -127,6 +127,7 @@ const AuthenticatedApp = () => {
           { label: 'Intelligence Factory', items: [
             { path: '/staff/digital-twin', label: 'Digital Twin Sandbox', icon: Sliders },
             { path: '/staff/iemh', label: 'Modelling Hub (IEMH)', icon: Cpu },
+            { path: '/staff/AIPoweredKPH', label: 'Policy Hub (KPH)', icon: Users },
             { path: '/staff/ward-observatory', label: 'Ward SAE Observatory', icon: MapPin },
             { path: '/staff/integrity', label: 'Integrity Workbench', icon: Scale },
             { path: '/staff/sdg', label: 'SDG Tracker', icon: Target },
@@ -154,6 +155,7 @@ const AuthenticatedApp = () => {
         <Route path="digital-twin" element={<DigitalTwinSandbox />} />
         <Route path="reports" element={<ReportGenerator />} />
         <Route path="iemh" element={<IEMH />} />
+        <Route path="KPH" element={<KPH />} />
         <Route path="ward-observatory" element={<WardObservatory />} />
         <Route path="integrity" element={<IntegrityWorkbench />} />
         <Route path="sdg" element={<SDGTracker />} />
