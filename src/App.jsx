@@ -17,6 +17,7 @@ import ETLPipeline from '@/pages/admin/ETLPipeline';
 import ConnectorMonitor from '@/pages/admin/ConnectorMonitor';
 import SuperAdminVault from '@/pages/admin/SuperAdminVault';
 import AlphaEconomistCopilot from '@/pages/staff/AlphaEconomistCopilot';
+import DataExplorer from '@/pages/staff/DataExplorer';
 import DigitalTwinSandbox from '@/pages/staff/DigitalTwinSandbox';
 import ReportGenerator from '@/pages/staff/ReportGenerator';
 import IEMH from '@/pages/staff/IEMH';
@@ -115,6 +116,10 @@ const AuthenticatedApp = () => {
           { label: 'Shared Brain', items: [
             { path: '/staff', label: 'AlphaEconomist Copilot', icon: Brain },
             { path: '/staff/collab', label: 'Collaboration Hub', icon: Users },
+          ]},
+          { label: 'Data & Analytics', items: [
+          { path: '/staff/explorer', label: 'Data Explorer', icon: Database },
+          { path: '/staff/reports', label: 'Report Generator', icon: FileText },
           ]},
           { label: 'Governance Cockpit', items: [
             { path: '/staff/cockpit', label: 'National Pulse', icon: Award },
