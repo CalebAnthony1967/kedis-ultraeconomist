@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/lib/i18n';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  // Navigation & Layout
   Menu, X, LayoutDashboard, Database, Users, BookOpen,
   MessageSquare, Bell, Settings, HelpCircle, ChevronDown,
   ChevronUp, Search, Filter, Download, Share2, RefreshCw,
@@ -15,14 +14,13 @@ import {
   Mic, MicOff, Loader2, Eye, EyeOff, Sliders,
   Table2, Grid3x3, Plus, Minus, Trash2, Edit,
   Upload, FolderOpen, Link, MessageCircle, Brain,
-  BarChart3, LineChart, PieChart, Radar,
-  GraduationCap, Video, Headphones, Globe2
+  BarChart3, LineChart, GraduationCap, Video, Headphones, Globe2
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, LineChart as ReLineChart,
   Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ComposedChart,
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ScatterChart, Scatter, ZAxis
 } from 'recharts';
 
