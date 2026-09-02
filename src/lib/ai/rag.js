@@ -1,5 +1,5 @@
 /**
- * AlphaEconomist 2.0 — Advanced Agentic RAG Pipeline
+ * RAG Pipeline – Enhanced with proper query understanding
  */
 
 import { classifyQuery } from './classifier';
@@ -7,108 +7,141 @@ import { retrieveData, getDistinctIndicators } from './retriever';
 import { callGroq, streamGroq } from './providers/groq';
 import { callHuggingFace } from './providers/huggingface';
 import { buildConversationContext } from './memory';
-import { computeDataStatistics, formatStatisticsMarkdown } from './mathEngine';
-import { buildSystemPrompt, buildUserPrompt } from './promptTemplates';
-import { resolveContextualQuery, calculateConfidenceScore } from './queryPlanner';
 
+/**
+ * Main RAG pipeline with enhanced query understanding
+ */
 export async function runRAG(query, conversationHistory = [], options = {}) {
   const {
     conversationId,
     filterContext = {},
     onChunk,
-    maxTokens = 1200,
-    temperature = 0.4, // Lower temperature for high factual accuracy
+    maxTokens = 800,
+    temperature = 0.7,
   } = options;
 
-  console.log('🧠 [AlphaEconomist 2.0] Analyzing query:', query);
+  const trimmedQuery = (query || '').trim();
 
-  // ============================================================
-  // STEP 1: Context Resolution & Anaphora Handling
-  // ============================================================
-  const { resolvedQuery, inheritedGeography } = resolveContextualQuery(query, conversationHistory);
-
-  // ============================================================
-  // STEP 2: Query Classification
-  // ============================================================
-  let classification = await classifyQuery(resolvedQuery, conversationHistory);
-  if (!classification.geography && inheritedGeography) {
-    classification.geography = inheritedGeography;
+  // Guard against accidental single-character / empty submissions
+  if (!trimmedQuery || trimmedQuery.length < 2) {
+    const defaultMsg = '👋 Hello! I am AlphaEconomist. Please ask a question about Kenya\'s data or specify a county/indicator.';
+    if (onChunk) onChunk(defaultMsg);
+    return {
+      answer: defaultMsg,
+      data: [],
+      classification: { intent: 'greeting', geography: null },
+      provider: 'assistant',
+      citations: [],
+      suggested_questions: ['What are the key economic indicators for Kenya?', 'Compare counties', 'Generate a report'],
+    };
   }
 
-  console.log('📋 [AlphaEconomist 2.0] Execution Plan:', {
-    intent: classification.intent,
-    geography: classification.geography?.name || 'National',
-    time_range: classification.time_range,
-  });
+  console.log('🧠 Running RAG pipeline for:', trimmedQuery);
 
   // ============================================================
-  // STEP 3: Multi-Strategy Retrieval
+  // STEP 1: Classify query (extract intent, entities, geography)
+  // ============================================================
+  const classification = await classifyQuery(trimmedQuery, conversationHistory);
+  console.log('📋 Classification:', classification);
+
+  // ============================================================
+  // STEP 2: Build context from conversation history
+  // ============================================================
+  const historyContext = buildConversationContext(conversationHistory);
+
+  // ============================================================
+  // STEP 3: Retrieve data based on classification
   // ============================================================
   let retrievedData = [];
-
+  
+  // Special handling for "listing" intent
   if (classification.intent === 'listing') {
+    // Get distinct indicators for the geography
     retrievedData = await getDistinctIndicators(classification.geography);
+    console.log(`📊 Found ${retrievedData.length} distinct indicators`);
   } else {
-    retrievedData = await retrieveData(resolvedQuery, classification, {
+    // Normal retrieval
+    retrievedData = await retrieveData(trimmedQuery, classification, { 
       ...filterContext,
       geography: classification.geography,
       time_range: classification.time_range,
     });
+    console.log(`📊 Retrieved ${retrievedData.length} indicators`);
   }
 
-  // Broaden retrieval if county-specific search returned nothing
+  // ============================================================
+  // STEP 4: If no data, broaden the search
+  // ============================================================
   if (retrievedData.length === 0 && classification.geography?.code) {
-    console.log('🔄 Broadening search without geography constraint...');
-    retrievedData = await retrieveData(resolvedQuery, { ...classification, geography: null });
+    console.log('No data, trying broader search...');
+    // Try without geography filter
+    const broadData = await retrieveData(trimmedQuery, { ...classification, geography: null });
+    retrievedData = broadData;
   }
 
   // ============================================================
-  // STEP 4: Deterministic Math Computation Engine
+  // STEP 5: Build context for LLM
   // ============================================================
-  const stats = computeDataStatistics(retrievedData);
-  const statisticsMarkdown = formatStatisticsMarkdown(stats);
+  let contextText = '';
+  
+  if (classification.intent === 'listing') {
+    // Format as a list for listing intent (top 20)
+    const indicators = retrievedData.slice(0, 20);
+    contextText = indicators.map(ind => 
+      `- ${ind.name} (${ind.unit || 'N/A'}) | Sector: ${ind.sector || 'N/A'} | Source: ${ind.source_mcda || 'Unknown'}`
+    ).join('\n');
+  } else {
+    // Format as data points (top 10)
+    contextText = retrievedData.slice(0, 10).map(ind => {
+      const value = ind.value !== null && ind.value !== undefined 
+        ? typeof ind.value === 'number' 
+          ? ind.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : ind.value
+        : 'N/A';
+      return `- ${ind.name} (${ind.year}): ${value} ${ind.unit || ''} | Source: ${ind.source_mcda || 'Unknown'}`;
+    }).join('\n');
+  }
 
   // ============================================================
-  // STEP 5: Format Raw Grounding Context
+  // STEP 6: Generate response with LLM (Exact Original Parameters & Instructions)
   // ============================================================
-  const contextText = retrievedData.slice(0, 25).map(ind => {
-    const valStr = ind.value !== null && ind.value !== undefined
-      ? typeof ind.value === 'number' ? ind.value.toLocaleString() : ind.value
-      : 'N/A';
-    const spiStr = ind.spi ? ` | SPI: ${ind.spi}` : '';
-    const sourceStr = ind.source_mcda ? ` | Source: ${ind.source_mcda}` : '';
-    const geoStr = ind.county_name ? ` (${ind.county_name})` : '';
-    return `- **${ind.name}**${geoStr} [${ind.year || 'N/A'}]: ${valStr} ${ind.unit || ''}${sourceStr}${spiStr}`;
-  }).join('\n');
+  const systemPrompt = `You are AlphaEconomist, a senior economic advisor for Kenya.
 
-  // ============================================================
-  // STEP 6: Assemble Prompts & Execute LLM Generation
-  // ============================================================
-  const historyContext = buildConversationContext(conversationHistory);
-  const systemPrompt = buildSystemPrompt({
-    classification,
-    language: filterContext.lang || 'en',
-    hasData: retrievedData.length > 0,
-  });
+Context:
+- Query intent: ${classification.intent || 'analysis'}
+- Geography: ${classification.geography?.type || 'National'} ${classification.geography?.name || ''}
+- Time range: ${classification.time_range?.start || 'N/A'} - ${classification.time_range?.end || 'N/A'}
+- Output format: ${classification.output_format || 'standard'}
 
-  const userPrompt = buildUserPrompt({
-    query: resolvedQuery,
-    contextText,
-    statisticsMarkdown,
-    historyContext,
-    classification,
-  });
+Guidelines:
+1. If the user asks "what are the indicators", list the indicators with their units and sources
+2. Use the provided data to answer questions
+3. Cite SPI references when available
+4. If data is insufficient, state that clearly and suggest alternatives
+5. For listing requests, format as a clean list
+6. Be concise and professional
+7. For county-specific queries, mention the county name clearly`;
+
+  const userPrompt = `User Question: ${trimmedQuery}
+
+Retrieved Data:
+${contextText || 'No specific data found for this query.'}
+
+Previous Conversation:
+${historyContext || 'No previous conversation.'}
+
+Provide a helpful response.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...conversationHistory.slice(-4).map(m => ({ role: m.role, content: m.content })),
+    ...conversationHistory.slice(-4),
     { role: 'user', content: userPrompt },
   ];
 
   let response = null;
   let provider = 'groq';
 
-  // Execute Groq with streaming support
+  // Try Groq with streaming support
   if (onChunk) {
     try {
       const streamResult = await streamGroq(messages, onChunk, { maxTokens, temperature });
@@ -116,7 +149,7 @@ export async function runRAG(query, conversationHistory = [], options = {}) {
         response = { content: streamResult, provider: 'groq' };
       }
     } catch (err) {
-      console.warn('Groq streaming failed, falling back to direct call:', err);
+      console.warn('Groq streaming failed, attempting standard call:', err);
     }
   }
 
@@ -126,78 +159,87 @@ export async function runRAG(query, conversationHistory = [], options = {}) {
 
   // Fallback to HuggingFace
   if (!response) {
-    console.log('🔄 Primary LLM unavailable, switching to HuggingFace fallback...');
-    response = await callHuggingFace(messages, { maxTokens: Math.min(maxTokens, 600), temperature });
+    console.log('🔄 Falling back to HuggingFace...');
+    response = await callHuggingFace(messages, { maxTokens: Math.min(maxTokens, 500), temperature });
     provider = 'huggingface';
   }
 
-  // Ultimate Rule-based fallback if all LLMs fail
+  // Ultimate fallback – data summary
   if (!response || !response.content) {
-    response = {
-      content: generateDeterministicFallback(resolvedQuery, retrievedData, stats, classification),
-      provider: 'deterministic_engine',
+    console.log('⚠️ All LLMs failed, generating data summary');
+    const fallbackResponse = generateFallbackResponse(trimmedQuery, retrievedData, classification);
+    return {
+      answer: fallbackResponse,
+      data: retrievedData,
+      classification,
+      provider: 'fallback',
+      citations: retrievedData.slice(0, 5).map(d => d.spi).filter(Boolean),
+      suggested_questions: generateSuggestedQuestions(trimmedQuery, classification, retrievedData),
     };
   }
 
   // ============================================================
-  // STEP 7: Compute Grounded Citations & Dynamic Suggestions
+  // STEP 7: Return response
   // ============================================================
-  const confidence = calculateConfidenceScore(retrievedData, classification);
-  const uniqueCitations = Array.from(new Set(retrievedData.map(d => d.spi).filter(Boolean)));
-  const suggestedQuestions = generateSmartFollowUps(classification, retrievedData, stats);
-
   return {
     answer: response.content,
     data: retrievedData,
     classification,
     provider: response.provider || provider,
-    confidence,
-    citations: uniqueCitations,
-    suggested_questions: suggestedQuestions,
-    analytics: stats?.summaries || null,
+    citations: retrievedData.slice(0, 5).map(d => d.spi).filter(Boolean),
+    suggested_questions: generateSuggestedQuestions(trimmedQuery, classification, retrievedData),
   };
 }
 
 /**
- * Robust Deterministic Fallback Builder
+ * Generate fallback response
  */
-function generateDeterministicFallback(query, data, stats, classification) {
+function generateFallbackResponse(query, data, classification) {
   if (!data || data.length === 0) {
-    return `### ⚠️ Data Notice
-I was unable to retrieve specific records for **"${query}"** in the sovereign data pool. 
-Please verify the county name or try selecting related economic indicators from the navigation tree.`;
+    if (classification.geography?.name) {
+      return `I couldn't find specific data for "${classification.geography.name}". Try checking if the county name is spelled correctly, or try a different county.`;
+    }
+    return `I couldn't find specific data for "${query}". Try adjusting your search terms or selecting a specific county.`;
   }
 
-  let text = `### 📊 Sovereign Data Summary for ${classification.geography?.name || 'Kenya'}\n\n`;
-  if (stats && stats.summaries.length > 0) {
-    text += formatStatisticsMarkdown(stats);
+  if (classification.intent === 'listing') {
+    const indicators = data.slice(0, 15).map(ind => 
+      `• ${ind.name} (${ind.unit || 'N/A'})`
+    ).join('\n');
+    return `Found ${data.length} indicators for ${classification.geography?.name || 'Kenya'}:\n\n${indicators}`;
   }
 
-  text += `\n*Retrieved ${data.length} official indicators matching your parameters.*`;
-  return text;
+  const summary = data.slice(0, 5).map(ind => {
+    const value = ind.value !== null && ind.value !== undefined 
+      ? typeof ind.value === 'number' 
+        ? ind.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : ind.value
+      : 'N/A';
+    return `• ${ind.name}: ${value} ${ind.unit || ''} (${ind.year})`;
+  }).join('\n');
+
+  return `Based on available data:\n\n${summary}\n\nI found ${data.length} indicators related to your query. Select one to view more details.`;
 }
 
 /**
- * Dynamic Context-Aware Follow-up Generator
+ * Generate suggested questions
  */
-function generateSmartFollowUps(classification, data, stats) {
+function generateSuggestedQuestions(query, classification, data) {
   const suggestions = [];
-  const geo = classification.geography?.name;
 
-  if (geo) {
-    suggestions.push(`Compare ${geo}'s GDP and revenue with neighboring counties`);
-    suggestions.push(`What are the top agricultural and health indicators for ${geo}?`);
-  } else {
-    suggestions.push('Show me county-level comparison for this indicator');
-    suggestions.push('What are the historical 5-year trends?');
+  if (classification.geography?.name) {
+    suggestions.push(`Show me GDP growth in ${classification.geography.name}`);
+    suggestions.push(`What are the main sectors in ${classification.geography.name}?`);
   }
 
-  if (stats && stats.summaries.length > 0) {
-    const topInd = stats.summaries[0].indicator;
-    suggestions.push(`Break down the economic drivers behind "${topInd}"`);
+  if (data && data.length > 0 && data[0]?.name) {
+    suggestions.push(`Show me the trend for "${data[0].name}"`);
   }
 
-  return suggestions.slice(0, 3);
+  suggestions.push('Compare counties');
+  suggestions.push('Generate a report');
+
+  return suggestions.slice(0, 4);
 }
 
 export default { runRAG };
