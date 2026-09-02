@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/lib/i18n';
 import { useExplorerData } from './hooks/useExplorerData';
 import { useAISearch } from './hooks/useAISearch';
+import { useToast } from '@/components/ui/use-toast';
 import SearchBar from './components/SearchBar';
 import DomainTree from './components/DomainTree';
 import DataCard from './components/DataCard';
@@ -32,6 +33,10 @@ import {
   ChevronUp,
   Share2,
   Link2,
+  Zap,
+  Target,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -103,6 +108,8 @@ function getDisplayIndicators(indicators) {
 
 export default function DataExplorer() {
   const { lang } = useLanguage();
+  const { toast } = useToast();
+  
   const {
     results,
     totalCount,
@@ -117,6 +124,23 @@ export default function DataExplorer() {
     clearFilters,
     goToPage,
     setPageSize,
+    // AI & Structured Context
+    lastClassification,
+    setLastClassification,
+    conversationId,
+    setConversationId,
+    conversations,
+    loadConversationsList,
+    saveStructuredTurn,
+    isAIActive,
+    aiConfidence,
+    missingEntities,
+    detectedGeography,
+    detectedIntent,
+    citations,
+    classifyUserQuery,
+    getConfidenceColor,
+    getConfidenceLabel,
   } = useExplorerData();
 
   const { translateQuery, isProcessing: isAISearching } = useAISearch();
@@ -132,6 +156,7 @@ export default function DataExplorer() {
   const [showInsights, setShowInsights] = useState(true);
   const [aiQuery, setAiQuery] = useState('');
   const [favourites, setFavourites] = useState([]);
+  const [aiInsights, setAiInsights] = useState([]);
   const recognitionRef = useRef(null);
 
   // Grouped indicators for display
@@ -139,9 +164,6 @@ export default function DataExplorer() {
 
   // Entity level counts
   const entityCounts = getEntityLevelCounts(results);
-
-  // AI Insights
-  const [insights, setInsights] = useState([]);
 
   // Initial search on load
   useEffect(() => {
@@ -181,9 +203,19 @@ export default function DataExplorer() {
     if (!query || query.trim().length === 0) return;
     
     setAiQuery(query);
-    const classification = await translateQuery(query);
+    
+    // Show toast that AI is analyzing
+    toast({
+      title: lang === 'sw' ? 'AI inachambua...' : 'AI is analyzing...',
+      description: lang === 'sw' ? 'Inatafuta kwenye hifadhi ya data' : 'Searching the sovereign data pool',
+      duration: 2000,
+    });
+    
+    // Classify the query using the enhanced classifier
+    const classification = await classifyUserQuery(query);
     
     if (classification) {
+      // Apply filters based on AI classification
       const newFilters = {
         query: classification.searchTerm || query,
         countyCodes: classification.countyCodes || [],
@@ -195,12 +227,18 @@ export default function DataExplorer() {
       
       updateFilters(newFilters);
       
-      if (classification.geography && classification.geography !== 'national') {
+      if (classification.geography?.type === 'county') {
         setSelectedEntityLevel('County');
+        toast({
+          title: lang === 'sw' ? `Eneo limegunduliwa: ${classification.geography.name}` : `Geography detected: ${classification.geography.name}`,
+          description: lang === 'sw' ? 'Vichujio vimewekwa kiotomatiki' : 'Filters have been auto-applied',
+          duration: 3000,
+        });
       }
       
       search(newFilters);
     } else {
+      // Fallback: regular search
       handleSearch(query);
     }
   };
@@ -259,7 +297,7 @@ export default function DataExplorer() {
   };
 
   const handleAIChatInsights = (newInsights) => {
-    setInsights(newInsights);
+    setAiInsights(newInsights);
   };
 
   // Voice Input
@@ -272,7 +310,11 @@ export default function DataExplorer() {
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert(lang === 'sw' ? 'Sauti haitumiki. Tumia Chrome au Edge.' : 'Voice not supported. Use Chrome or Edge.');
+      toast({
+        title: lang === 'sw' ? 'Sauti haitumiki' : 'Voice not supported',
+        description: lang === 'sw' ? 'Tumia Chrome au Edge' : 'Use Chrome or Edge browser',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -290,7 +332,10 @@ export default function DataExplorer() {
 
     recognition.onerror = () => {
       setIsVoiceListening(false);
-      alert(lang === 'sw' ? 'Hitilafu ya sauti. Jaribu tena.' : 'Voice error. Please try again.');
+      toast({
+        title: lang === 'sw' ? 'Hitilafu ya sauti' : 'Voice error',
+        variant: 'destructive',
+      });
     };
 
     recognition.onend = () => setIsVoiceListening(false);
@@ -311,7 +356,11 @@ export default function DataExplorer() {
       }).catch(() => {});
     } else {
       navigator.clipboard.writeText(url).then(() => {
-        alert(lang === 'sw' ? 'URL imenakiliwa!' : 'URL copied to clipboard!');
+        toast({
+          title: lang === 'sw' ? 'URL imenakiliwa!' : 'URL copied!',
+          description: lang === 'sw' ? 'Shiriki na wengine' : 'Share with others',
+          duration: 2000,
+        });
       }).catch(() => {});
     }
   };
@@ -366,6 +415,19 @@ export default function DataExplorer() {
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
               </div>
+
+              {/* AI Confidence Badge */}
+              {aiConfidence > 0 && (
+                <span className={`text-[10px] px-2 py-1 rounded-full border flex items-center gap-1
+                  ${aiConfidence >= 0.7 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                    aiConfidence >= 0.4 ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
+                    'bg-red-500/10 text-red-600 border-red-500/20'
+                  }`}
+                >
+                  <CheckCircle2 className="h-3 w-3" />
+                  {Math.round(aiConfidence * 100)}% {lang === 'sw' ? 'uaminifu' : 'confidence'}
+                </span>
+              )}
 
               {/* Share Button */}
               <button
@@ -514,7 +576,7 @@ export default function DataExplorer() {
 
               {/* AI Query Display */}
               {aiQuery && (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/5 border border-primary/20">
                     <Sparkles className="h-3 w-3 text-primary" />
                     <span className="text-[10px] text-primary font-medium">
@@ -530,6 +592,30 @@ export default function DataExplorer() {
                   >
                     <X className="h-3 w-3" />
                   </button>
+                  {detectedGeography?.name && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 flex items-center gap-1">
+                      <MapPin className="h-2.5 w-2.5" />
+                      {detectedGeography.name}
+                    </span>
+                  )}
+                  {detectedIntent && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1
+                      ${detectedIntent === 'listing' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
+                        detectedIntent === 'trend' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                        detectedIntent === 'comparison' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20' :
+                        'bg-secondary text-muted-foreground'
+                      }`}
+                    >
+                      <Target className="h-2.5 w-2.5" />
+                      {detectedIntent}
+                    </span>
+                  )}
+                  {missingEntities.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1">
+                      <AlertCircle className="h-2.5 w-2.5" />
+                      {missingEntities.length} missing
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -554,13 +640,25 @@ export default function DataExplorer() {
                       results={results}
                       onApplyFilters={handleAIFilterApply}
                       onGenerateReport={() => console.log('Generate report')}
-                      lang={lang}
+                      lastClassification={lastClassification}
+                      setLastClassification={setLastClassification}
+                      conversationId={conversationId}
+                      setConversationId={setConversationId}
+                      conversations={conversations}
+                      loadConversationsList={loadConversationsList}
+                      saveStructuredTurn={saveStructuredTurn}
                       className="min-h-[200px]"
+                      lang={lang}
                     />
                   )}
                   {showInsights && (
                     <InsightsPanel
                       data={displayIndicators}
+                      citations={citations}
+                      confidence={aiConfidence}
+                      missingEntities={missingEntities}
+                      detectedGeography={detectedGeography}
+                      detectedIntent={detectedIntent}
                       onGenerate={handleAIChatInsights}
                       className="min-h-[200px]"
                       lang={lang}
@@ -693,7 +791,7 @@ export default function DataExplorer() {
                     </div>
                   )}
 
-                  {/* Table View - NEW */}
+                  {/* Table View */}
                   {viewMode === 'table' && (
                     <TableView
                       data={displayIndicators}
