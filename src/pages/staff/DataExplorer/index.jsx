@@ -5,6 +5,7 @@ import { useAISearch } from './hooks/useAISearch';
 import SearchBar from './components/SearchBar';
 import DomainTree from './components/DomainTree';
 import DataCard from './components/DataCard';
+import TableView from './components/TableView';
 import ControlBar from './components/ControlBar';
 import FilterDrawer from './components/FilterDrawer';
 import ChartView from './components/ChartView';
@@ -22,21 +23,83 @@ import {
   Mic,
   MicOff,
   MessageSquare,
-  LayoutDashboard,
   Grid3x3,
   Table2,
   BarChart3,
-  Zap,
   Activity,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Globe,
   MapPin,
-  ChevronDown,
   ChevronUp,
+  Share2,
+  Link2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+// ============================================================
+// HELPER: Group indicators by name, show latest year
+// ============================================================
+
+/**
+ * Group indicators by name/indicator_id and show latest year
+ */
+function groupIndicatorsByLatestYear(indicators) {
+  const grouped = {};
+  
+  for (const indicator of indicators) {
+    const key = indicator.indicator_id || indicator.name;
+    if (!grouped[key]) {
+      grouped[key] = {
+        ...indicator,
+        years: [indicator.year],
+        values: [{ year: indicator.year, value: indicator.value }],
+        year_range: `${indicator.year}`,
+      };
+    } else {
+      // Add year to the list
+      if (indicator.year && !grouped[key].years.includes(indicator.year)) {
+        grouped[key].years.push(indicator.year);
+        grouped[key].values.push({ year: indicator.year, value: indicator.value });
+      }
+      // Keep the latest year's value for display
+      if (indicator.year > grouped[key].year) {
+        grouped[key].year = indicator.year;
+        grouped[key].value = indicator.value;
+      }
+      // Update year range
+      if (indicator.year) {
+        const years = grouped[key].years;
+        grouped[key].year_range = `${Math.min(...years)} – ${Math.max(...years)}`;
+      }
+    }
+  }
+  
+  // Sort years for each indicator
+  for (const key of Object.keys(grouped)) {
+    grouped[key].years.sort((a, b) => a - b);
+    grouped[key].values.sort((a, b) => a.year - b.year);
+  }
+  
+  return Object.values(grouped);
+}
+
+/**
+ * Get display indicators (grouped by name, showing latest year)
+ */
+function getDisplayIndicators(indicators) {
+  if (!indicators || indicators.length === 0) return [];
+  
+  // Check if we already have grouped data (has 'values' property)
+  if (indicators[0]?.values) {
+    return indicators;
+  }
+  
+  // Group raw data
+  return groupIndicatorsByLatestYear(indicators);
+}
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
 
 export default function DataExplorer() {
   const { lang } = useLanguage();
@@ -58,6 +121,7 @@ export default function DataExplorer() {
 
   const { translateQuery, isProcessing: isAISearching } = useAISearch();
 
+  // State
   const [viewMode, setViewMode] = useState('card');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedIndicatorId, setSelectedIndicatorId] = useState(null);
@@ -67,7 +131,11 @@ export default function DataExplorer() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showInsights, setShowInsights] = useState(true);
   const [aiQuery, setAiQuery] = useState('');
+  const [favourites, setFavourites] = useState([]);
   const recognitionRef = useRef(null);
+
+  // Grouped indicators for display
+  const displayIndicators = getDisplayIndicators(results);
 
   // Entity level counts
   const entityCounts = getEntityLevelCounts(results);
@@ -116,7 +184,6 @@ export default function DataExplorer() {
     const classification = await translateQuery(query);
     
     if (classification) {
-      // Apply filters based on AI classification
       const newFilters = {
         query: classification.searchTerm || query,
         countyCodes: classification.countyCodes || [],
@@ -128,14 +195,12 @@ export default function DataExplorer() {
       
       updateFilters(newFilters);
       
-      // If geography detected, update entity level
       if (classification.geography && classification.geography !== 'national') {
         setSelectedEntityLevel('County');
       }
       
       search(newFilters);
     } else {
-      // Fallback: regular search
       handleSearch(query);
     }
   };
@@ -149,7 +214,13 @@ export default function DataExplorer() {
   };
 
   const handleViewIndicator = (indicator) => {
-    setSelectedIndicatorId(indicator.id);
+    // Find the original indicator with all years
+    const original = results.find(r => r.indicator_id === indicator.indicator_id || r.name === indicator.name);
+    if (original) {
+      setSelectedIndicatorId(original.id);
+    } else {
+      setSelectedIndicatorId(indicator.id);
+    }
     const chartSection = document.getElementById('chart-section');
     if (chartSection) {
       chartSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -158,6 +229,23 @@ export default function DataExplorer() {
 
   const handleDownload = (indicator) => {
     console.log('Download indicator:', indicator);
+    // Implement download logic
+  };
+
+  const handleFavourite = (indicator) => {
+    const id = indicator.indicator_id || indicator.id;
+    setFavourites(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(f => f !== id);
+      } else {
+        return [...prev, id];
+      }
+    });
+  };
+
+  const isFavourite = (indicator) => {
+    const id = indicator.indicator_id || indicator.id;
+    return favourites.includes(id);
   };
 
   const handleApplyFilters = (newFilters) => {
@@ -184,11 +272,7 @@ export default function DataExplorer() {
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      toast({
-        title: lang === 'sw' ? 'Sauti haitumiki' : 'Voice not supported',
-        description: lang === 'sw' ? 'Tumia Chrome au Edge' : 'Use Chrome or Edge browser',
-        variant: 'destructive',
-      });
+      alert(lang === 'sw' ? 'Sauti haitumiki. Tumia Chrome au Edge.' : 'Voice not supported. Use Chrome or Edge.');
       return;
     }
 
@@ -206,10 +290,7 @@ export default function DataExplorer() {
 
     recognition.onerror = () => {
       setIsVoiceListening(false);
-      toast({
-        title: lang === 'sw' ? 'Hitilafu ya sauti' : 'Voice error',
-        variant: 'destructive',
-      });
+      alert(lang === 'sw' ? 'Hitilafu ya sauti. Jaribu tena.' : 'Voice error. Please try again.');
     };
 
     recognition.onend = () => setIsVoiceListening(false);
@@ -217,6 +298,22 @@ export default function DataExplorer() {
     recognitionRef.current = recognition;
     recognition.start();
     setIsVoiceListening(true);
+  };
+
+  // Share functionality
+  const handleShare = () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      navigator.share({
+        title: 'KEDIS Data Explorer',
+        text: 'Check out this data from KEDIS UltraEconomist',
+        url: url,
+      }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(url).then(() => {
+        alert(lang === 'sw' ? 'URL imenakiliwa!' : 'URL copied to clipboard!');
+      }).catch(() => {});
+    }
   };
 
   const currentPage = Math.floor(filters.offset / filters.limit) + 1;
@@ -270,10 +367,22 @@ export default function DataExplorer() {
                 </span>
               </div>
 
+              {/* Share Button */}
+              <button
+                onClick={handleShare}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs font-medium hover:bg-secondary/50 transition-colors"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                {lang === 'sw' ? 'Shiriki' : 'Share'}
+              </button>
+
               {/* Total Counter */}
               <div className="inline-flex items-center gap-1.5 rounded-full bg-secondary/50 px-3 py-1.5 text-xs font-semibold text-foreground border border-border/50">
                 <Database className="h-3.5 w-3.5 text-primary" />
-                {totalCount.toLocaleString()} {lang === 'sw' ? 'viashiria' : 'indicators'}
+                {displayIndicators.length} {lang === 'sw' ? 'viashiria' : 'indicators'}
+                <span className="text-[10px] text-muted-foreground">
+                  ({results.length} {lang === 'sw' ? 'rekodi' : 'records'})
+                </span>
               </div>
             </div>
           </div>
@@ -328,7 +437,6 @@ export default function DataExplorer() {
           <div className="bg-card/50 backdrop-blur-sm border-b border-border/50 px-4 lg:px-6 py-3">
             <div className="max-w-full">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                {/* Search Bar with Voice */}
                 <div className="flex-1 w-full">
                   <div className="relative">
                     <SearchBar
@@ -371,7 +479,6 @@ export default function DataExplorer() {
                   </div>
                 </div>
 
-                {/* Quick Actions */}
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={() => setShowAIChat(!showAIChat)}
@@ -429,7 +536,7 @@ export default function DataExplorer() {
           </div>
 
           {/* ============================================================ */}
-          {/* AI CHAT & INSIGHTS PANELS (Collapsible) */}
+          {/* AI CHAT & INSIGHTS PANELS */}
           {/* ============================================================ */}
           <AnimatePresence>
             {(showAIChat || showInsights) && (
@@ -453,7 +560,7 @@ export default function DataExplorer() {
                   )}
                   {showInsights && (
                     <InsightsPanel
-                      data={results}
+                      data={displayIndicators}
                       onGenerate={handleAIChatInsights}
                       className="min-h-[200px]"
                       lang={lang}
@@ -494,13 +601,16 @@ export default function DataExplorer() {
               {/* Result Counter */}
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">
-                  {totalCount > 0 ? (filters.offset + 1) : 0}
+                  {displayIndicators.length > 0 ? 1 : 0}
                 </span>
                 {' - '}
                 <span className="font-medium text-foreground">
-                  {Math.min(filters.offset + filters.limit, totalCount)}
+                  {displayIndicators.length}
                 </span>
-                {' '}{lang === 'sw' ? 'ya' : 'of'} {totalCount.toLocaleString()}
+                {' '}{lang === 'sw' ? 'ya' : 'of'} {displayIndicators.length} {lang === 'sw' ? 'viashiria' : 'indicators'}
+                <span className="text-[10px] text-muted-foreground/60 ml-2">
+                  ({results.length} {lang === 'sw' ? 'rekodi' : 'records'})
+                </span>
               </div>
 
               {/* Sort & Page Size */}
@@ -534,7 +644,7 @@ export default function DataExplorer() {
           <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-6">
             <div className="max-w-7xl mx-auto space-y-6">
               {/* Loading State */}
-              {isLoading && !results.length && (
+              {isLoading && !displayIndicators.length && (
                 <div className="flex flex-col items-center justify-center py-20">
                   <div className="relative">
                     <div className="h-12 w-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -565,78 +675,34 @@ export default function DataExplorer() {
               )}
 
               {/* Results */}
-              {!isLoading && !error && results.length > 0 && (
+              {!isLoading && !error && displayIndicators.length > 0 && (
                 <>
+                  {/* Card View */}
                   {viewMode === 'card' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {results.map((indicator) => (
+                      {displayIndicators.map((indicator) => (
                         <DataCard
-                          key={indicator.id}
+                          key={indicator.indicator_id || indicator.id || indicator.name}
                           indicator={indicator}
                           onView={handleViewIndicator}
                           onDownload={handleDownload}
+                          onFavourite={handleFavourite}
+                          isFavourite={isFavourite(indicator)}
                         />
                       ))}
                     </div>
                   )}
 
+                  {/* Table View - NEW */}
                   {viewMode === 'table' && (
-                    <div className="rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden shadow-sm">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="bg-secondary/30 border-b border-border/50">
-                            <tr>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">
-                                {lang === 'sw' ? 'Kiashiria' : 'Indicator'}
-                              </th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">
-                                {lang === 'sw' ? 'Kiwango' : 'Level'}
-                              </th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">Year</th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">Value</th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">Unit</th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">Source</th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground text-xs uppercase tracking-wider">
-                                {lang === 'sw' ? 'Eneo' : 'Geography'}
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {results.map((indicator) => (
-                              <tr
-                                key={indicator.id}
-                                className="border-b border-border/30 hover:bg-secondary/20 transition-colors cursor-pointer"
-                                onClick={() => handleViewIndicator(indicator)}
-                              >
-                                <td className="px-4 py-3 font-medium text-foreground">{indicator.name}</td>
-                                <td className="px-4 py-3">
-                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium
-                                    ${indicator.entity_level === 'National' ? 'bg-primary/10 text-primary' :
-                                      indicator.entity_level === 'County' ? 'bg-emerald-500/10 text-emerald-600' :
-                                      'bg-amber-500/10 text-amber-600'}`}
-                                  >
-                                    {indicator.entity_level || 'National'}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3 text-muted-foreground">{indicator.year || '-'}</td>
-                                <td className="px-4 py-3 text-foreground font-medium">
-                                  {indicator.value?.toLocaleString() || '-'}
-                                </td>
-                                <td className="px-4 py-3 text-muted-foreground">{indicator.unit || '-'}</td>
-                                <td className="px-4 py-3 text-muted-foreground truncate max-w-[150px]">
-                                  {indicator.source_mcda || '-'}
-                                </td>
-                                <td className="px-4 py-3 text-muted-foreground">
-                                  {indicator.county_name || indicator.entity_level || 'National'}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
+                    <TableView
+                      data={displayIndicators}
+                      onRowClick={handleViewIndicator}
+                      lang={lang}
+                    />
                   )}
 
+                  {/* Chart View */}
                   {viewMode === 'chart' && (
                     <div id="chart-section">
                       <ChartView
@@ -644,6 +710,7 @@ export default function DataExplorer() {
                         selectedIndicatorId={selectedIndicatorId}
                         onSelectIndicator={setSelectedIndicatorId}
                         onExport={handleDownload}
+                        lang={lang}
                       />
                     </div>
                   )}
@@ -680,7 +747,7 @@ export default function DataExplorer() {
               )}
 
               {/* Empty State */}
-              {!isLoading && !error && results.length === 0 && (
+              {!isLoading && !error && displayIndicators.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20">
                   <div className="relative">
                     <div className="h-20 w-20 rounded-full bg-primary/5 flex items-center justify-center">
