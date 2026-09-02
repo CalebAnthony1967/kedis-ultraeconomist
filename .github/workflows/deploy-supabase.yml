@@ -21,16 +21,40 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
 
       - name: Install Supabase CLI
         run: |
           npm install -g supabase
+
+      # ============================================================
+      # FIX: Create the required config.toml file
+      # ============================================================
+      - name: Create Supabase config
+        run: |
+          mkdir -p supabase
+          cat > supabase/config.toml << 'EOF'
+          project_id = "${{ secrets.SUPABASE_PROJECT_ID }}"
+          
+          [api]
+          enabled = true
+          port = 54321
+          schemas = ["public", "kedis_meta"]
+          extra_search_path = ["public", "kedis_meta"]
+          max_rows = 1000
+          
+          [functions]
+          enabled = true
+          
+          [functions.explorer-api]
+          enabled = true
+          verify_jwt = false
+          EOF
 
       - name: Link Supabase Project
         run: |
@@ -40,12 +64,7 @@ jobs:
 
       - name: Deploy Explorer API Function
         run: |
-          supabase functions deploy explorer-api --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-
-      - name: Deploy all functions (if any)
-        run: |
-          supabase functions deploy --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
+          supabase functions deploy explorer-api \
+            --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
