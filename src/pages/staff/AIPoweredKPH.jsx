@@ -1271,7 +1271,7 @@ export default function AIPoweredKPH() {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-emerald-600 text-white text-sm font-bold">
                 G
               </div>
-              <span className="text-sm font-medium text-foreground hidden sm:block">Gideon</span>
+              <span className="text-sm font-medium text-foreground hidden sm:block"></span>
             </div>
           </div>
         </div>
