@@ -148,6 +148,7 @@ const AuthenticatedApp = () => {
         ]} />
       }>
         <Route index element={<AlphaEconomistCopilot />} />
+        <Route path="explorer" element={<DataExplorer />} />
         <Route path="handshake" element={<DepartmentalHandshake />} />
         <Route path="cockpit" element={<GovernanceCockpit />} />
         <Route path="digital-twin" element={<DigitalTwinSandbox />} />
