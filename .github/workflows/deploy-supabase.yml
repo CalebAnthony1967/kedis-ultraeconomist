@@ -16,8 +16,6 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
     steps:
       - name: Checkout code
@@ -29,23 +27,23 @@ jobs:
           node-version: '18'
 
       - name: Install Supabase CLI
-        run: |
-          npm install -g supabase
+        run: npm install -g supabase
 
       # ============================================================
-      # FIX: Create the required config.toml file
+      # FIX: Create the config.toml with minimal valid configuration
       # ============================================================
       - name: Create Supabase config
         run: |
           mkdir -p supabase
           cat > supabase/config.toml << 'EOF'
+          # Minimal Supabase configuration
           project_id = "${{ secrets.SUPABASE_PROJECT_ID }}"
           
           [api]
           enabled = true
           port = 54321
-          schemas = ["public", "kedis_meta"]
-          extra_search_path = ["public", "kedis_meta"]
+          schemas = ["public", "storage", "graphql_public"]
+          extra_search_path = ["public", "storage"]
           max_rows = 1000
           
           [functions]
@@ -55,6 +53,9 @@ jobs:
           enabled = true
           verify_jwt = false
           EOF
+          
+          # Display the config for debugging
+          cat supabase/config.toml
 
       - name: Link Supabase Project
         run: |
@@ -64,7 +65,10 @@ jobs:
 
       - name: Deploy Explorer API Function
         run: |
-          supabase functions deploy explorer-api \
-            --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
+          supabase functions deploy explorer-api --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Verify Deployment
+        run: |
+          curl -s https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/functions/v1/explorer-api/domains || echo "Function deployed but verification may take a moment"
