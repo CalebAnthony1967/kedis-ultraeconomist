@@ -72,3 +72,20 @@ inspector_port = 8083
 
 [analytics]
 enabled = false
+
+# ============================================================================
+# EDGE FUNCTIONS CONFIGURATION
+# ============================================================================
+[functions]
+enabled = true
+
+[functions.explorer-api]
+enabled = true
+verify_jwt = false
+import_map = ""
+
+[functions.explorer-api.env]
+# These environment variables will be set on deployment
+# They are read from your project's secrets
+# SUPABASE_URL is automatically injected
+# SUPABASE_SERVICE_ROLE_KEY is read from secrets
