@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLanguage } from '@/lib/i18n';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -44,8 +45,10 @@ export default function ChartView({
   onExport = () => {},
   className = '',
   height = 350,
+  lang: propLang, // Allow lang to be passed as prop
 }) {
-  const { lang } = useLanguage();
+  const { lang: contextLang } = useLanguage();
+  const lang = propLang || contextLang; // Use prop if provided, otherwise context
   const [chartType, setChartType] = useState('line');
   const [chartData, setChartData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -207,7 +210,7 @@ export default function ChartView({
               stroke="#f5a623"
               strokeDasharray="3 3"
             >
-              <Label value="Average" position="top" />
+              <Label value={lang === 'sw' ? 'Wastani' : 'Average'} position="top" />
             </ReferenceLine>
           </BarChart>
         );
@@ -282,7 +285,7 @@ export default function ChartView({
               stroke="#f5a623"
               strokeDasharray="3 3"
             >
-              <Label value="Average" position="top" />
+              <Label value={lang === 'sw' ? 'Wastani' : 'Average'} position="top" />
             </ReferenceLine>
           </LineChart>
         );
@@ -363,7 +366,7 @@ export default function ChartView({
         <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/10">
           <h4 className="text-xs font-semibold text-primary mb-2 flex items-center gap-2">
             <span className="text-sm">🧠</span>
-            AI Insights
+            {lang === 'sw' ? 'Uchambuzi wa AI' : 'AI Insights'}
           </h4>
           <div className="space-y-1.5">
             {aiInsights.map((insight, i) => (
