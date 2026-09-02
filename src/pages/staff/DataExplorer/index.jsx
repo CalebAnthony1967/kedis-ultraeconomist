@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/lib/i18n';
 import { useExplorerData } from './hooks/useExplorerData';
-import { useAISearch } from './hooks/useAISearch';
 import { useToast } from '@/components/ui/use-toast';
 import SearchBar from './components/SearchBar';
 import DomainTree from './components/DomainTree';
@@ -143,8 +142,6 @@ export default function DataExplorer() {
     getConfidenceLabel,
   } = useExplorerData();
 
-  const { translateQuery, isProcessing: isAISearching } = useAISearch();
-
   // State
   const [viewMode, setViewMode] = useState('card');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -157,6 +154,7 @@ export default function DataExplorer() {
   const [aiQuery, setAiQuery] = useState('');
   const [favourites, setFavourites] = useState([]);
   const [aiInsights, setAiInsights] = useState([]);
+  const [isAISearching, setIsAISearching] = useState(false);
   const recognitionRef = useRef(null);
 
   // Grouped indicators for display
@@ -203,6 +201,7 @@ export default function DataExplorer() {
     if (!query || query.trim().length === 0) return;
     
     setAiQuery(query);
+    setIsAISearching(true);
     
     // Show toast that AI is analyzing
     toast({
@@ -211,35 +210,43 @@ export default function DataExplorer() {
       duration: 2000,
     });
     
-    // Classify the query using the enhanced classifier
-    const classification = await classifyUserQuery(query);
-    
-    if (classification) {
-      // Apply filters based on AI classification
-      const newFilters = {
-        query: classification.searchTerm || query,
-        countyCodes: classification.countyCodes || [],
-        entityLevels: classification.entityLevel || ['National', 'County'],
-        yearStart: classification.yearStart || null,
-        yearEnd: classification.yearEnd || null,
-        pillars: classification.pillars || [],
-      };
+    try {
+      // Classify the query using the enhanced classifier from useExplorerData
+      const classification = await classifyUserQuery(query);
       
-      updateFilters(newFilters);
-      
-      if (classification.geography?.type === 'county') {
-        setSelectedEntityLevel('County');
-        toast({
-          title: lang === 'sw' ? `Eneo limegunduliwa: ${classification.geography.name}` : `Geography detected: ${classification.geography.name}`,
-          description: lang === 'sw' ? 'Vichujio vimewekwa kiotomatiki' : 'Filters have been auto-applied',
-          duration: 3000,
-        });
+      if (classification) {
+        // Apply filters based on AI classification
+        const newFilters = {
+          query: classification.searchTerm || query,
+          countyCodes: classification.countyCodes || [],
+          entityLevels: classification.entityLevel || ['National', 'County'],
+          yearStart: classification.yearStart || null,
+          yearEnd: classification.yearEnd || null,
+          pillars: classification.pillars || [],
+        };
+        
+        updateFilters(newFilters);
+        
+        if (classification.geography?.type === 'county') {
+          setSelectedEntityLevel('County');
+          toast({
+            title: lang === 'sw' ? `Eneo limegunduliwa: ${classification.geography.name}` : `Geography detected: ${classification.geography.name}`,
+            description: lang === 'sw' ? 'Vichujio vimewekwa kiotomatiki' : 'Filters have been auto-applied',
+            duration: 3000,
+          });
+        }
+        
+        search(newFilters);
+      } else {
+        // Fallback: regular search
+        handleSearch(query);
       }
-      
-      search(newFilters);
-    } else {
-      // Fallback: regular search
+    } catch (error) {
+      console.error('AI search failed:', error);
+      // Fallback to regular search
       handleSearch(query);
+    } finally {
+      setIsAISearching(false);
     }
   };
 
@@ -419,11 +426,8 @@ export default function DataExplorer() {
               {/* AI Confidence Badge */}
               {aiConfidence > 0 && (
                 <span className={`text-[10px] px-2 py-1 rounded-full border flex items-center gap-1
-                  ${aiConfidence >= 0.7 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
-                    aiConfidence >= 0.4 ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
-                    'bg-red-500/10 text-red-600 border-red-500/20'
-                  }`}
-                >
+                  ${getConfidenceColor(aiConfidence)}
+                `}>
                   <CheckCircle2 className="h-3 w-3" />
                   {Math.round(aiConfidence * 100)}% {lang === 'sw' ? 'uaminifu' : 'confidence'}
                 </span>
