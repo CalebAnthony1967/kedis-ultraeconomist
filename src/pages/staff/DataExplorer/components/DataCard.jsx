@@ -10,6 +10,8 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Database,
+  FileText
 } from 'lucide-react';
 
 export default function DataCard({
@@ -56,6 +58,23 @@ export default function DataCard({
     return colors[pillar] || 'bg-secondary text-muted-foreground';
   };
 
+  // Get entity level badge
+  const getEntityLevelBadge = (level) => {
+    if (!level || level === 'National') return null;
+    const configs = {
+      County: { bg: 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20', label: 'County' },
+      'Sub-County': { bg: 'bg-amber-500/10 text-amber-600 border border-amber-500/20', label: 'Sub-County' },
+      Ward: { bg: 'bg-purple-500/10 text-purple-600 border border-purple-500/20', label: 'Ward' },
+    };
+    const config = configs[level];
+    if (!config) return null;
+    return (
+      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${config.bg}`}>
+        {config.label}
+      </span>
+    );
+  };
+
   // Format value
   const formattedValue = value !== undefined && value !== null
     ? typeof value === 'number'
@@ -75,19 +94,15 @@ export default function DataCard({
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getPillarColor(pillar)}`}>
             {pillar || 'General'}
           </span>
-          {entity_level && entity_level !== 'National' && (
-            <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium border border-primary/20">
-              {entity_level}
-            </span>
-          )}
+          {getEntityLevelBadge(entity_level)}
         </div>
         <button
           onClick={() => onView(indicator)}
-          className="p-1 rounded-lg hover:bg-secondary transition-colors"
+          className="p-1 rounded-lg hover:bg-secondary transition-colors shrink-0"
         >
           <Eye className="h-4 w-4 text-muted-foreground hover:text-foreground" />
         </button>
@@ -101,11 +116,17 @@ export default function DataCard({
       </div>
 
       {/* Geography & Value */}
-      <div className="mt-2 flex items-center gap-3">
+      <div className="mt-2 flex items-center gap-3 flex-wrap">
         {county_name && (
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <MapPin className="h-3 w-3" />
             {county_name}
+          </div>
+        )}
+        {!county_name && entity_level === 'National' && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Database className="h-3 w-3" />
+            National
           </div>
         )}
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
