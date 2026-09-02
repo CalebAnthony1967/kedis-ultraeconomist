@@ -1,16 +1,15 @@
 /**
- * RAG Pipeline – Complete Retrieval-Augmented Generation
+ * RAG Pipeline – Enhanced with proper query understanding
  */
 
 import { classifyQuery } from './classifier';
-import { retrieveData, getIndicatorTimeSeries, getRelatedIndicators } from './retriever';
+import { retrieveData, getDistinctIndicators } from './retriever';
 import { callGroq, streamGroq } from './providers/groq';
 import { callHuggingFace } from './providers/huggingface';
-import { buildConversationContext, extractContextEntities } from './memory';
-import { supabase } from '@/lib/supabaseClient';
+import { buildConversationContext } from './memory';
 
 /**
- * Main RAG pipeline
+ * Main RAG pipeline with enhanced query understanding
  */
 export async function runRAG(query, conversationHistory = [], options = {}) {
   const {
@@ -23,80 +22,112 @@ export async function runRAG(query, conversationHistory = [], options = {}) {
 
   console.log('🧠 Running RAG pipeline for:', query);
 
-  // Step 1: Classify query
+  // ============================================================
+  // STEP 1: Classify query (extract intent, entities, geography)
+  // ============================================================
   const classification = await classifyQuery(query, conversationHistory);
   console.log('📋 Classification:', classification);
 
-  // Step 2: Build context from conversation history
+  // ============================================================
+  // STEP 2: Build context from conversation history
+  // ============================================================
   const historyContext = buildConversationContext(conversationHistory);
-  const entities = extractContextEntities(conversationHistory);
+
+  // ============================================================
+  // STEP 3: Retrieve data based on classification
+  // ============================================================
+  let retrievedData = [];
   
-  // Combine entities from classification and history
-  const combinedEntities = {
-    indicators: [...(classification.entities?.indicators || []), ...(entities.indicators || [])],
-    counties: [...(classification.entities?.counties || []), ...(entities.counties || [])],
-    years: [...(classification.entities?.years || []), ...(entities.years || [])],
-  };
+  // Special handling for "listing" intent
+  if (classification.intent === 'listing') {
+    // Get distinct indicators for the geography
+    retrievedData = await getDistinctIndicators(classification.geography);
+    console.log(`📊 Found ${retrievedData.length} distinct indicators`);
+  } else {
+    // Normal retrieval
+    retrievedData = await retrieveData(query, classification, { 
+      ...filterContext,
+      geography: classification.geography,
+      time_range: classification.time_range,
+    });
+    console.log(`📊 Retrieved ${retrievedData.length} indicators`);
+  }
 
-  // Step 3: Retrieve data
-  const filters = {
-    ...filterContext,
-    countyCodes: combinedEntities.counties,
-    entityLevels: classification.geography === 'county' ? ['County'] : ['National', 'County'],
-    yearStart: classification.time_range?.start,
-    yearEnd: classification.time_range?.end,
-  };
+  // ============================================================
+  // STEP 4: If no data, broaden the search
+  // ============================================================
+  if (retrievedData.length === 0 && classification.geography?.code) {
+    console.log('No data, trying broader search...');
+    // Try without geography filter
+    const broadData = await retrieveData(query, { ...classification, geography: null });
+    retrievedData = broadData;
+  }
 
-  const retrievedData = await retrieveData(query, { entities: combinedEntities, filters });
-  console.log(`📊 Retrieved ${retrievedData.length} indicators`);
+  // ============================================================
+  // STEP 5: Build context for LLM
+  // ============================================================
+  let contextText = '';
+  
+  if (classification.intent === 'listing') {
+    // Format as a list for listing intent
+    const indicators = retrievedData.slice(0, 20);
+    contextText = indicators.map(ind => 
+      `- ${ind.name} (${ind.unit || 'N/A'}) | Sector: ${ind.sector || 'N/A'} | Source: ${ind.source_mcda || 'Unknown'}`
+    ).join('\n');
+  } else {
+    // Format as data points
+    contextText = retrievedData.slice(0, 10).map(ind => {
+      const value = ind.value !== null && ind.value !== undefined 
+        ? typeof ind.value === 'number' 
+          ? ind.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : ind.value
+        : 'N/A'
+      return `- ${ind.name} (${ind.year}): ${value} ${ind.unit || ''} | Source: ${ind.source_mcda || 'Unknown'}`
+    }).join('\n');
+  }
 
-  // Step 4: Build context for LLM
-  const dataContext = retrievedData.slice(0, 10).map(ind => {
-    return `- ${ind.name} (${ind.year}): ${ind.value} ${ind.unit || ''} | Source: ${ind.source_mcda || 'Unknown'}`;
-  }).join('\n');
+  // ============================================================
+  // STEP 6: Generate response with LLM
+  // ============================================================
+  const systemPrompt = `You are AlphaEconomist, a senior economic advisor for Kenya.
 
-  // Step 5: Generate response with Groq (or fallback)
-  const systemPrompt = `You are AlphaEconomist, Kenya's leading economic policy assistant.
-You help users explore economic data and provide insights.
-
-Key principles:
-1. Always cite data sources when referencing specific figures
-2. If data is insufficient, state that clearly
-3. Provide analysis, not just raw numbers
-4. Suggest follow-up questions when appropriate
-5. Use the conversation history to maintain context
-
-Current context:
+Context:
 - Query intent: ${classification.intent}
-- Geography: ${classification.geography}
-- Time range: ${classification.time_range?.start} - ${classification.time_range?.end}
-- Entities: ${JSON.stringify(combinedEntities)}`;
+- Geography: ${classification.geography?.type || 'National'} ${classification.geography?.name || ''}
+- Time range: ${classification.time_range?.start || 'N/A'} - ${classification.time_range?.end || 'N/A'}
+- Output format: ${classification.output_format}
 
-  const userPrompt = `Question: ${query}
+Guidelines:
+1. If the user asks "what are the indicators", list the indicators with their units and sources
+2. Use the provided data to answer questions
+3. Cite SPI references when available
+4. If data is insufficient, state that clearly and suggest alternatives
+5. For listing requests, format as a clean list
+6. Be concise and professional
+7. For county-specific queries, mention the county name clearly`;
 
-Retrieved data:
-${dataContext || 'No specific data found for this query.'}
+  const userPrompt = `User Question: ${query}
 
-Conversation history:
+Retrieved Data:
+${contextText || 'No specific data found for this query.'}
+
+Previous Conversation:
 ${historyContext || 'No previous conversation.'}
 
-Please provide a helpful, data-driven response.`;
+Provide a helpful response.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...conversationHistory.slice(-6), // Include recent history
+    ...conversationHistory.slice(-4),
     { role: 'user', content: userPrompt },
   ];
 
   let response = null;
   let provider = 'groq';
 
-  // Try Groq first with streaming
+  // Try Groq
   if (onChunk) {
-    const streamResult = await streamGroq(messages, onChunk, {
-      maxTokens,
-      temperature,
-    });
+    const streamResult = await streamGroq(messages, onChunk, { maxTokens, temperature });
     if (streamResult) {
       response = { content: 'Streamed response', provider: 'groq' };
     }
@@ -104,7 +135,7 @@ Please provide a helpful, data-driven response.`;
     response = await callGroq(messages, { maxTokens, temperature });
   }
 
-  // Fallback to HuggingFace if Groq fails
+  // Fallback to HuggingFace
   if (!response) {
     console.log('🔄 Falling back to HuggingFace...');
     response = await callHuggingFace(messages, { maxTokens: Math.min(maxTokens, 500), temperature });
@@ -124,67 +155,66 @@ Please provide a helpful, data-driven response.`;
     };
   }
 
-  // Step 6: Save conversation to Supabase
-  if (conversationId) {
-    try {
-      await supabase
-        .from('copilot_conversations')
-        .update({
-          messages: [
-            ...conversationHistory,
-            { role: 'user', content: query },
-            { role: 'assistant', content: response.content },
-          ],
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', conversationId);
-    } catch (e) {
-      console.warn('Failed to save conversation:', e);
-    }
-  }
-
-  // Step 7: Return complete response
+  // ============================================================
+  // STEP 7: Return response
+  // ============================================================
   return {
     answer: response.content,
     data: retrievedData,
     classification,
     provider,
     citations: retrievedData.slice(0, 5).map(d => d.spi).filter(Boolean),
-    suggestedQuestions: generateSuggestedQuestions(query, classification, retrievedData),
+    suggested_questions: generateSuggestedQuestions(query, classification, retrievedData),
   };
 }
 
 /**
- * Generate fallback response when LLM is unavailable
+ * Generate fallback response
  */
 function generateFallbackResponse(query, data, classification) {
   if (data.length === 0) {
-    return `I couldn't find specific data for "${query}". Try adjusting your search terms or filters.`;
+    if (classification.geography?.name) {
+      return `I couldn't find specific data for "${classification.geography.name}". Try checking if the county name is spelled correctly, or try a different county.`;
+    }
+    return `I couldn't find specific data for "${query}". Try adjusting your search terms or selecting a specific county.`;
   }
 
-  const summary = data.slice(0, 5).map(d => 
-    `• ${d.name}: ${d.value} ${d.unit || ''} (${d.year})`
-  ).join('\n');
+  if (classification.intent === 'listing') {
+    const indicators = data.slice(0, 15).map(ind => 
+      `• ${ind.name} (${ind.unit || 'N/A'})`
+    ).join('\n');
+    return `Found ${data.length} indicators for ${classification.geography?.name || 'Kenya'}:\n\n${indicators}`;
+  }
 
-  return `Based on available data:\n\n${summary}\n\nI found ${data.length} indicators related to your query. Please select one to view more details.`;
+  const summary = data.slice(0, 5).map(ind => {
+    const value = ind.value !== null && ind.value !== undefined 
+      ? typeof ind.value === 'number' 
+        ? ind.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : ind.value
+      : 'N/A'
+    return `• ${ind.name}: ${value} ${ind.unit || ''} (${ind.year})`
+  }).join('\n');
+
+  return `Based on available data:\n\n${summary}\n\nI found ${data.length} indicators related to your query. Select one to view more details.`;
 }
 
 /**
- * Generate suggested follow-up questions
+ * Generate suggested questions
  */
 function generateSuggestedQuestions(query, classification, data) {
   const suggestions = [];
 
-  if (data.length > 0) {
-    suggestions.push(`Show me the trend for ${data[0]?.name}`);
+  if (classification.geography?.name) {
+    suggestions.push(`Show me GDP growth in ${classification.geography.name}`);
+    suggestions.push(`What are the main sectors in ${classification.geography.name}?`);
   }
 
-  if (classification.entities?.counties?.length > 0) {
-    suggestions.push(`Compare ${classification.entities.counties.join(' and ')}`);
+  if (data.length > 0 && data[0]?.name) {
+    suggestions.push(`Show me the trend for "${data[0].name}"`);
   }
 
-  suggestions.push('Show me related indicators');
-  suggestions.push('Generate a report on these findings');
+  suggestions.push('Compare counties');
+  suggestions.push('Generate a report');
 
   return suggestions.slice(0, 4);
 }
