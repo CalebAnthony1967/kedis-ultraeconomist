@@ -1,11 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  TrendingUp, TrendingDown, AlertTriangle, 
-  CheckCircle2, BarChart3, Lightbulb, 
-  ChevronDown, ChevronUp 
+import { useLanguage } from '@/lib/i18n';
+import {
+  TrendingUp, TrendingDown, Minus, AlertTriangle,
+  CheckCircle2, BarChart3, Lightbulb, MapPin, Target,
+  ChevronDown, ChevronUp, Hash, Database, Sparkles
 } from 'lucide-react';
 
-export default function InsightsPanel({ data, onGenerate, className = '' }) {
+export default function InsightsPanel({
+  data = [],
+  onGenerate = () => {},
+  className = '',
+  citations = [],
+  confidence = 0,
+  missingEntities = [],
+  detectedGeography = null,
+  detectedIntent = null,
+}) {
+  const { lang } = useLanguage();
   const [insights, setInsights] = useState([]);
   const [isExpanded, setIsExpanded] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -20,108 +31,120 @@ export default function InsightsPanel({ data, onGenerate, className = '' }) {
 
   const generateInsights = (results) => {
     setIsLoading(true);
-    
-    // Simulate AI processing
+
     setTimeout(() => {
       const generated = [];
-      
-      // 1. Check for trends
-      const values = results.map(r => r.value).filter(v => v !== null && v !== undefined);
-      if (values.length > 1) {
-        const first = values[0];
-        const last = values[values.length - 1];
-        const change = ((last - first) / (first || 1)) * 100;
-        if (Math.abs(change) > 1) {
-          generated.push({
-            id: 'trend',
-            icon: change > 0 ? <TrendingUp className="h-4 w-4 text-emerald-500" /> : <TrendingDown className="h-4 w-4 text-red-500" />,
-            text: `${change > 0 ? 'Increasing' : 'Decreasing'} trend detected: ${Math.abs(change).toFixed(1)}% change`,
-            severity: Math.abs(change) > 10 ? 'high' : 'medium',
-          });
-        }
-      }
 
-      // 2. Check for anomalies
-      if (values.length > 0) {
-        const mean = values.reduce((a, b) => a + b, 0) / values.length;
-        const max = Math.max(...values);
-        const min = Math.min(...values);
-        const range = max - min;
-        
-        if (range / (mean || 1) > 0.3) {
-          generated.push({
-            id: 'anomaly',
-            icon: <AlertTriangle className="h-4 w-4 text-amber-500" />,
-            text: `Significant variance detected: range of ${range.toFixed(2)} from min to max`,
-            severity: 'medium',
-          });
-        }
-      }
+      // 1. Data Summary
+      generated.push({
+        id: 'summary',
+        icon: <Database className="h-4 w-4 text-primary" />,
+        text: `${results.length} ${lang === 'sw' ? 'viashiria' : 'indicators'} ${lang === 'sw' ? 'vimepatikana' : 'found'}`,
+        severity: 'low',
+        type: 'info',
+      });
 
-      // 3. Check for positive indicators
-      const growing = results.filter(r => r.value && r.value > 0);
-      if (growing.length > 0) {
+      // 2. Geography Context
+      if (detectedGeography?.name) {
         generated.push({
-          id: 'positive',
-          icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
-          text: `${growing.length} indicators show positive values`,
+          id: 'geography',
+          icon: <MapPin className="h-4 w-4 text-emerald-500" />,
+          text: `${lang === 'sw' ? 'Eneo' : 'Location'}: ${detectedGeography.name}`,
           severity: 'low',
+          type: 'geo',
         });
       }
 
-      // 4. Data completeness
-      if (results.length > 5) {
-        const years = new Set(results.map(r => r.year));
+      // 3. Intent Context
+      if (detectedIntent) {
         generated.push({
-          id: 'coverage',
-          icon: <BarChart3 className="h-4 w-4 text-primary" />,
-          text: `${years.size} years of data available (${results.length} records)`,
+          id: 'intent',
+          icon: <Target className="h-4 w-4 text-amber-500" />,
+          text: `${lang === 'sw' ? 'Aina ya swali' : 'Query type'}: ${detectedIntent}`,
           severity: 'low',
+          type: 'intent',
         });
       }
 
-      // 5. Top performer
-      if (results.length > 1) {
-        const sorted = [...results].sort((a, b) => (b.value || 0) - (a.value || 0));
-        const top = sorted[0];
+      // 4. Confidence
+      if (confidence > 0) {
+        const confidenceLabel = confidence >= 0.7 ? 'High' : confidence >= 0.4 ? 'Medium' : 'Low';
+        const confidenceColor = confidence >= 0.7 ? 'text-emerald-600' : confidence >= 0.4 ? 'text-amber-600' : 'text-red-600';
         generated.push({
-          id: 'top',
-          icon: <Lightbulb className="h-4 w-4 text-amber-500" />,
-          text: `Highest value in ${top.year}: ${top.value?.toLocaleString() || 'N/A'} ${top.unit || ''}`,
+          id: 'confidence',
+          icon: <CheckCircle2 className="h-4 w-4 text-primary" />,
+          text: `${lang === 'sw' ? 'Uaminifu' : 'Confidence'}: ${confidenceLabel} (${Math.round(confidence * 100)}%)`,
+          severity: confidence >= 0.7 ? 'low' : 'medium',
+          type: 'confidence',
+          color: confidenceColor,
+        });
+      }
+
+      // 5. Missing Entities
+      if (missingEntities && missingEntities.length > 0) {
+        generated.push({
+          id: 'missing',
+          icon: <AlertTriangle className="h-4 w-4 text-amber-500" />,
+          text: `${lang === 'sw' ? 'Viashiria vinavyokosekana' : 'Missing indicators'}: ${missingEntities.join(', ')}`,
+          severity: 'high',
+          type: 'warning',
+        });
+      }
+
+      // 6. SPI Citations
+      if (citations && citations.length > 0) {
+        generated.push({
+          id: 'citations',
+          icon: <Hash className="h-4 w-4 text-primary" />,
+          text: `${citations.length} SPI ${lang === 'sw' ? 'zimetajwa' : 'cited'}`,
           severity: 'low',
+          type: 'citations',
+          citations: citations,
         });
       }
 
       setInsights(generated);
       setIsLoading(false);
-      onGenerate?.(generated);
-    }, 500);
+      onGenerate(generated);
+    }, 300);
   };
 
   if (insights.length === 0 && !isLoading) {
     return (
-      <div className={`rounded-xl border border-border bg-card p-4 ${className}`}>
+      <div className={`rounded-xl border border-border/50 bg-card/80 backdrop-blur-sm p-4 ${className}`}>
         <div className="text-center text-sm text-muted-foreground">
           <Lightbulb className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-          <p>Select data to generate AI insights</p>
+          <p>{lang === 'sw' ? 'Chagua data ili kupata uchambuzi wa AI' : 'Select data to generate AI insights'}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`rounded-xl border border-border bg-card overflow-hidden ${className}`}>
+    <div className={`rounded-xl border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden ${className}`}>
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full px-4 py-3 flex items-center justify-between hover:bg-secondary/30 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <Lightbulb className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-foreground">AI Insights</h3>
+          <Sparkles className="h-4 w-4 text-amber-500" />
+          <h3 className="text-sm font-semibold text-foreground">
+            {lang === 'sw' ? 'Uchambuzi wa AI' : 'AI Insights'}
+          </h3>
           {insights.length > 0 && (
             <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
               {insights.length}
+            </span>
+          )}
+          {confidence > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1
+              ${confidence >= 0.7 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                confidence >= 0.4 ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
+                'bg-red-500/10 text-red-600 border-red-500/20'
+              }`}
+            >
+              {Math.round(confidence * 100)}%
             </span>
           )}
         </div>
@@ -134,24 +157,39 @@ export default function InsightsPanel({ data, onGenerate, className = '' }) {
 
       {/* Body */}
       {isExpanded && (
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-4 space-y-1.5">
           {isLoading ? (
             <div className="text-center py-4">
               <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs text-muted-foreground mt-2">Generating insights...</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                {lang === 'sw' ? 'Inachambua...' : 'Analyzing...'}
+              </p>
             </div>
           ) : (
             insights.map((insight) => (
               <div
                 key={insight.id}
-                className={`flex items-start gap-3 p-3 rounded-lg text-xs
+                className={`flex items-start gap-3 p-2.5 rounded-lg text-xs
                   ${insight.severity === 'high' ? 'bg-red-50 border border-red-100' :
                     insight.severity === 'medium' ? 'bg-amber-50 border border-amber-100' :
                     'bg-secondary/30 border border-border/50'
                   }`}
               >
                 <div className="shrink-0 mt-0.5">{insight.icon}</div>
-                <span className="text-foreground/80">{insight.text}</span>
+                <div className="flex-1">
+                  <span className={`text-foreground/80 ${insight.color || ''}`}>
+                    {insight.text}
+                  </span>
+                  {insight.citations && insight.citations.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {insight.citations.slice(0, 5).map((spi, i) => (
+                        <span key={i} className="text-[10px] font-mono bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10 text-primary">
+                          {spi}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ))
           )}
