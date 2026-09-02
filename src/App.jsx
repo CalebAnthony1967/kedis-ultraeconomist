@@ -21,7 +21,8 @@ import DataExplorer from '@/pages/staff/DataExplorer';
 import DigitalTwinSandbox from '@/pages/staff/DigitalTwinSandbox';
 import ReportGenerator from '@/pages/staff/ReportGenerator';
 import IEMH from '@/pages/staff/IEMH';
-import KPH from '@/pages/staff/AIPoweredKPH';
+// FIX: Import AIPoweredKPH and alias it as KPH, or import directly as KPH
+import AIPoweredKPH from '@/pages/staff/AIPoweredKPH';
 import SDGTracker from '@/pages/staff/SDGTracker';
 import WardGISMap from '@/pages/public/WardGISMap';
 import PolicyPlayground from '@/pages/public/PolicyPlayground';
@@ -128,7 +129,8 @@ const AuthenticatedApp = () => {
           { label: 'Intelligence Factory', items: [
             { path: '/staff/digital-twin', label: 'Digital Twin Sandbox', icon: Sliders },
             { path: '/staff/iemh', label: 'Modelling Hub (IEMH)', icon: Cpu },
-            { path: '/staff/AIPoweredKPH', label: 'Policy Hub (KPH)', icon: Users },
+            // FIX: Use AIPoweredKPH as the component
+            { path: '/staff/kph', label: 'AI Policy Hub (KPH)', icon: Users },
             { path: '/staff/ward-observatory', label: 'Ward SAE Observatory', icon: MapPin },
             { path: '/staff/integrity', label: 'Integrity Workbench', icon: Scale },
             { path: '/staff/sdg', label: 'SDG Tracker', icon: Target },
@@ -156,7 +158,8 @@ const AuthenticatedApp = () => {
         <Route path="digital-twin" element={<DigitalTwinSandbox />} />
         <Route path="reports" element={<ReportGenerator />} />
         <Route path="iemh" element={<IEMH />} />
-        <Route path="KPH" element={<KPH />} />
+        {/* FIX: Use AIPoweredKPH component for the KPH route */}
+        <Route path="kph" element={<AIPoweredKPH />} />
         <Route path="ward-observatory" element={<WardObservatory />} />
         <Route path="integrity" element={<IntegrityWorkbench />} />
         <Route path="sdg" element={<SDGTracker />} />
