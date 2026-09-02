@@ -2,7 +2,7 @@
 # KEDIS UltraEconomist — Supabase Project Configuration
 # ============================================================================
 
-project_id = "kedis-ultraeconomist"
+project_id = "smkwoszizgbvflrczsge"
 
 [api]
 enabled = true
