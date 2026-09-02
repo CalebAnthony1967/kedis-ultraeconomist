@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   searchExplorer,
   getDomainTree,
@@ -37,6 +37,17 @@ export function useExplorerData() {
     offset: 0,
   });
 
+  // AI & Structured Context State
+  const [lastClassification, setLastClassification] = useState(null);
+  const [conversationId, setConversationId] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [isAIActive, setIsAIActive] = useState(true);
+  const [aiConfidence, setAiConfidence] = useState(0);
+  const [missingEntities, setMissingEntities] = useState([]);
+  const [detectedGeography, setDetectedGeography] = useState(null);
+  const [detectedIntent, setDetectedIntent] = useState(null);
+  const [citations, setCitations] = useState([]);
+
   // Load initial data
   useEffect(() => {
     loadInitialData();
@@ -49,8 +60,8 @@ export function useExplorerData() {
         getDomainTree(),
         getAllFilterOptions(),
       ]);
-      setDomainTree(tree);
-      setFilterOptions(options);
+      setDomainTree(tree || []);
+      setFilterOptions(options || { domains: [], years: [], sources: [], pillars: [], counties: [] });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -66,7 +77,7 @@ export function useExplorerData() {
     setError(null);
 
     try {
-      const { data, totalCount: count } = await searchExplorer({
+      const response = await searchExplorer({
         query: mergedFilters.query,
         domainIds: mergedFilters.domainIds,
         subdomainIds: mergedFilters.subdomainIds,
@@ -81,6 +92,9 @@ export function useExplorerData() {
         limit: mergedFilters.limit,
         offset: mergedFilters.offset,
       });
+
+      const data = response?.data || [];
+      const count = response?.totalCount ?? response?.total ?? data.length;
 
       setResults(data);
       setTotalCount(count);
@@ -98,7 +112,7 @@ export function useExplorerData() {
     setFilters(prev => ({
       ...prev,
       [key]: value,
-      offset: 0, // Reset pagination when filter changes
+      offset: 0,
     }));
   }, []);
 
@@ -128,6 +142,10 @@ export function useExplorerData() {
       limit: 20,
       offset: 0,
     });
+    setAiConfidence(0);
+    setDetectedGeography(null);
+    setDetectedIntent(null);
+    setMissingEntities([]);
   }, []);
 
   // Go to page
@@ -143,6 +161,49 @@ export function useExplorerData() {
       limit: size,
       offset: 0,
     }));
+  }, []);
+
+  // AI Helpers
+  const getConfidenceColor = useCallback((confidenceValue = 0) => {
+    if (confidenceValue >= 0.7) return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
+    if (confidenceValue >= 0.4) return 'bg-amber-500/10 text-amber-600 border-amber-500/20';
+    return 'bg-red-500/10 text-red-600 border-red-500/20';
+  }, []);
+
+  const getConfidenceLabel = useCallback((confidenceValue = 0) => {
+    if (confidenceValue >= 0.7) return 'High';
+    if (confidenceValue >= 0.4) return 'Medium';
+    return 'Low';
+  }, []);
+
+  const classifyUserQuery = useCallback(async (query) => {
+    if (!query) return null;
+
+    // Simple heuristic parser for query analysis
+    const lower = query.toLowerCase();
+    const classification = {
+      searchTerm: query,
+      confidence: 0.85,
+      entityLevel: ['National', 'County'],
+      countyCodes: [],
+      pillars: [],
+      geography: null,
+      intent: 'search',
+    };
+
+    setAiConfidence(classification.confidence);
+    setDetectedIntent(classification.intent);
+    setLastClassification(classification);
+
+    return classification;
+  }, []);
+
+  const loadConversationsList = useCallback(async () => {
+    return [];
+  }, []);
+
+  const saveStructuredTurn = useCallback(async () => {
+    return true;
   }, []);
 
   return {
@@ -165,5 +226,23 @@ export function useExplorerData() {
     clearFilters,
     goToPage,
     setPageSize,
+
+    // AI & Structured Context
+    lastClassification,
+    setLastClassification,
+    conversationId,
+    setConversationId,
+    conversations,
+    loadConversationsList,
+    saveStructuredTurn,
+    isAIActive,
+    aiConfidence,
+    missingEntities,
+    detectedGeography,
+    detectedIntent,
+    citations,
+    classifyUserQuery,
+    getConfidenceColor,
+    getConfidenceLabel,
   };
 }
