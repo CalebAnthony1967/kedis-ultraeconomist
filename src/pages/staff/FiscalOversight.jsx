@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/lib/i18n';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   DollarSign, TrendingUp, TrendingDown, AlertTriangle,
   Wallet, PieChart as PieIcon, Target, CheckCircle2,
@@ -145,9 +145,6 @@ const StatusBadge = ({ status }) => {
     elevated: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Elevated' },
     below_target: { bg: 'bg-red-100', text: 'text-red-700', label: 'Below Target' },
     info: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Info' },
-    draft: { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Draft' },
-    approved: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Approved' },
-    pending_review: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Pending Review' },
   };
   const config = configs[status] || configs.info;
   return (
@@ -174,9 +171,12 @@ export default function FiscalOversight() {
     Object.fromEntries(SIMULATION_LEVERS.map(l => [l.key, l.default]))
   );
   const [isSimulating, setIsSimulating] = useState(false);
-  const [selectedBrief, setSelectedBrief] = useState('');
+  const [showAlerts, setShowAlerts] = useState(true);
+  const [selectedBrief, setSelectedBrief] = useState(null);
   const [isGeneratingBrief, setIsGeneratingBrief] = useState(false);
   const [briefContent, setBriefContent] = useState('');
+
+  // Scenario simulation result
   const [simulationResult, setSimulationResult] = useState(null);
 
   // Run simulation
@@ -209,23 +209,23 @@ export default function FiscalOversight() {
     setIsGeneratingBrief(true);
     setTimeout(() => {
       setBriefContent(`
-# Executive Summary
-Based on current fiscal indicators and economic projections, Kenya faces moderate fiscal risks in the near term. Revenue collection is trending below BPS targets by approximately 8.7%, while debt-to-GDP ratio continues to rise.
+        # Executive Summary
+        Based on current fiscal indicators and economic projections, Kenya faces moderate fiscal risks in the near term. Revenue collection is trending below BPS targets by approximately 8.7%, while debt-to-GDP ratio continues to rise.
 
-# Key Findings
-1. **Revenue Shortfall**: KES 115.3B gap against BPS 2025 targets
-2. **Debt Sustainability**: Debt-to-GDP projected to reach 72.5% by 2026
-3. **Inflation Pressure**: Food inflation at 8.4% exceeding threshold
+        # Key Findings
+        1. **Revenue Shortfall**: KES 115.3B gap against BPS 2025 targets
+        2. **Debt Sustainability**: Debt-to-GDP projected to reach 72.5% by 2026
+        3. **Inflation Pressure**: Food inflation at 8.4% exceeding threshold
 
-# Recommendations
-1. Enhance revenue collection through digital tax compliance
-2. Reassess expenditure priorities to reduce recurrent spending
-3. Consider supplementary budget adjustments for Q3 2025
+        # Recommendations
+        1. Enhance revenue collection through digital tax compliance
+        2. Reassess expenditure priorities to reduce recurrent spending
+        3. Consider supplementary budget adjustments for Q3 2025
 
-# Sources
-- Kenya National Bureau of Statistics (KNBS) Economic Survey 2024
-- National Treasury Budget Policy Statement 2025
-- Central Bank of Kenya (CBK) Monetary Policy Statement
+        # Sources
+        - Kenya National Bureau of Statistics (KNBS) Economic Survey 2024
+        - National Treasury Budget Policy Statement 2025
+        - Central Bank of Kenya (CBK) Monetary Policy Statement
       `);
       setIsGeneratingBrief(false);
     }, 2000);
@@ -692,7 +692,7 @@ Based on current fiscal indicators and economic projections, Kenya faces moderat
                         <p className="text-xs text-muted-foreground">{brief.date}</p>
                       </div>
                     </div>
-                    <StatusBadge status={brief.status} />
+                    <StatusBadge status={brief.status === 'approved' ? 'stable' : brief.status === 'draft' ? 'info' : 'warning'} />
                   </div>
                 ))}
               </div>
@@ -711,7 +711,7 @@ Based on current fiscal indicators and economic projections, Kenya faces moderat
                   </label>
                   <input
                     type="text"
-                    value={selectedBrief}
+                    value={selectedBrief || ''}
                     onChange={(e) => setSelectedBrief(e.target.value)}
                     placeholder={lang === 'sw' ? 'e.g., Utabiri wa Mapato 2025' : 'e.g., Revenue Outlook 2025'}
                     className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
