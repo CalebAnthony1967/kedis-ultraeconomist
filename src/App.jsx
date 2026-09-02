@@ -21,6 +21,7 @@ import DataExplorer from '@/pages/staff/DataExplorer';
 import DigitalTwinSandbox from '@/pages/staff/DigitalTwinSandbox';
 import ReportGenerator from '@/pages/staff/ReportGenerator';
 import IEMH from '@/pages/staff/IEMH';
+import KPH from '@/pages/staff/AIPoweredKPH';
 import SDGTracker from '@/pages/staff/SDGTracker';
 import WardGISMap from '@/pages/public/WardGISMap';
 import PolicyPlayground from '@/pages/public/PolicyPlayground';
