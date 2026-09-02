@@ -30,12 +30,14 @@ import {
   Globe,
   MapPin,
   ChevronUp,
+  ChevronDown,
   Share2,
   Link2,
   Zap,
   Target,
   CheckCircle2,
   AlertCircle,
+  Menu,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -43,9 +45,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 // HELPER: Group indicators by name, show latest year
 // ============================================================
 
-/**
- * Group indicators by name/indicator_id and show latest year
- */
 function groupIndicatorsByLatestYear(indicators) {
   const grouped = {};
   
@@ -59,17 +58,14 @@ function groupIndicatorsByLatestYear(indicators) {
         year_range: `${indicator.year}`,
       };
     } else {
-      // Add year to the list
       if (indicator.year && !grouped[key].years.includes(indicator.year)) {
         grouped[key].years.push(indicator.year);
         grouped[key].values.push({ year: indicator.year, value: indicator.value });
       }
-      // Keep the latest year's value for display
       if (indicator.year > grouped[key].year) {
         grouped[key].year = indicator.year;
         grouped[key].value = indicator.value;
       }
-      // Update year range
       if (indicator.year) {
         const years = grouped[key].years;
         grouped[key].year_range = `${Math.min(...years)} – ${Math.max(...years)}`;
@@ -77,7 +73,6 @@ function groupIndicatorsByLatestYear(indicators) {
     }
   }
   
-  // Sort years for each indicator
   for (const key of Object.keys(grouped)) {
     grouped[key].years.sort((a, b) => a - b);
     grouped[key].values.sort((a, b) => a.year - b.year);
@@ -86,18 +81,11 @@ function groupIndicatorsByLatestYear(indicators) {
   return Object.values(grouped);
 }
 
-/**
- * Get display indicators (grouped by name, showing latest year)
- */
 function getDisplayIndicators(indicators) {
   if (!indicators || indicators.length === 0) return [];
-  
-  // Check if we already have grouped data (has 'values' property)
   if (indicators[0]?.values) {
     return indicators;
   }
-  
-  // Group raw data
   return groupIndicatorsByLatestYear(indicators);
 }
 
@@ -123,7 +111,6 @@ export default function DataExplorer() {
     clearFilters,
     goToPage,
     setPageSize,
-    // AI & Structured Context
     lastClassification,
     setLastClassification,
     conversationId,
@@ -147,20 +134,41 @@ export default function DataExplorer() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedIndicatorId, setSelectedIndicatorId] = useState(null);
   const [selectedEntityLevel, setSelectedEntityLevel] = useState('all');
-  const [showAIChat, setShowAIChat] = useState(true);
+  const [showAIChat, setShowAIChat] = useState(false); // Default closed on mobile
   const [isVoiceListening, setIsVoiceListening] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showInsights, setShowInsights] = useState(true);
+  const [showInsights, setShowInsights] = useState(false); // Default closed on mobile
   const [aiQuery, setAiQuery] = useState('');
   const [favourites, setFavourites] = useState([]);
   const [aiInsights, setAiInsights] = useState([]);
   const [isAISearching, setIsAISearching] = useState(false);
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const recognitionRef = useRef(null);
+
+  // Check if mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 1024);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Close mobile sidebar when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (showMobileSidebar && !e.target.closest('.mobile-sidebar') && !e.target.closest('.menu-button')) {
+        setShowMobileSidebar(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showMobileSidebar]);
 
   // Grouped indicators for display
   const displayIndicators = getDisplayIndicators(results);
-
-  // Entity level counts
   const entityCounts = getEntityLevelCounts(results);
 
   // Initial search on load
@@ -196,14 +204,12 @@ export default function DataExplorer() {
     search({ query });
   };
 
-  // AI-Powered Search
   const handleAISearch = async (query) => {
     if (!query || query.trim().length === 0) return;
     
     setAiQuery(query);
     setIsAISearching(true);
     
-    // Show toast that AI is analyzing
     toast({
       title: lang === 'sw' ? 'AI inachambua...' : 'AI is analyzing...',
       description: lang === 'sw' ? 'Inatafuta kwenye hifadhi ya data' : 'Searching the sovereign data pool',
@@ -211,11 +217,9 @@ export default function DataExplorer() {
     });
     
     try {
-      // Classify the query using the enhanced classifier from useExplorerData
       const classification = await classifyUserQuery(query);
       
       if (classification) {
-        // Apply filters based on AI classification
         const newFilters = {
           query: classification.searchTerm || query,
           countyCodes: classification.countyCodes || [],
@@ -238,12 +242,10 @@ export default function DataExplorer() {
         
         search(newFilters);
       } else {
-        // Fallback: regular search
         handleSearch(query);
       }
     } catch (error) {
       console.error('AI search failed:', error);
-      // Fallback to regular search
       handleSearch(query);
     } finally {
       setIsAISearching(false);
@@ -259,7 +261,6 @@ export default function DataExplorer() {
   };
 
   const handleViewIndicator = (indicator) => {
-    // Find the original indicator with all years
     const original = results.find(r => r.indicator_id === indicator.indicator_id || r.name === indicator.name);
     if (original) {
       setSelectedIndicatorId(original.id);
@@ -274,7 +275,6 @@ export default function DataExplorer() {
 
   const handleDownload = (indicator) => {
     console.log('Download indicator:', indicator);
-    // Implement download logic
   };
 
   const handleFavourite = (indicator) => {
@@ -307,7 +307,6 @@ export default function DataExplorer() {
     setAiInsights(newInsights);
   };
 
-  // Voice Input
   const toggleVoiceInput = () => {
     if (isVoiceListening) {
       recognitionRef.current?.stop();
@@ -352,7 +351,6 @@ export default function DataExplorer() {
     setIsVoiceListening(true);
   };
 
-  // Share functionality
   const handleShare = () => {
     const url = window.location.href;
     if (navigator.share) {
@@ -384,77 +382,97 @@ export default function DataExplorer() {
   return (
     <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
       {/* ============================================================ */}
-      {/* HEADER WITH GLASSMORPHISM */}
+      {/* HEADER - MOBILE OPTIMIZED */}
       {/* ============================================================ */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-white/70 dark:bg-slate-950/70 border-b border-border/50 px-4 lg:px-8 py-4">
+      <div className="sticky top-0 z-20 backdrop-blur-xl bg-white/70 dark:bg-slate-950/70 border-b border-border/50 px-3 sm:px-4 lg:px-8 py-3 sm:py-4">
         <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-emerald-600 shadow-lg shadow-primary/20">
-                <Database className="h-5 w-5 text-white" />
+          <div className="flex items-center justify-between gap-2 sm:gap-4">
+            {/* Logo & Title */}
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              {/* Menu Button - Mobile Only */}
+              <button
+                onClick={() => setShowMobileSidebar(!showMobileSidebar)}
+                className="lg:hidden p-1.5 rounded-lg hover:bg-secondary/50 transition-colors menu-button"
+                aria-label="Toggle menu"
+              >
+                <Menu className="h-5 w-5 text-foreground" />
+              </button>
+
+              <div className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-emerald-600 shadow-lg shadow-primary/20 flex-shrink-0">
+                <Database className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
               </div>
-              <div>
-                <h1 className="font-display text-xl font-bold text-foreground flex items-center gap-2">
-                  <span className="bg-gradient-to-r from-primary to-emerald-600 bg-clip-text text-transparent">
-                    {lang === 'sw' ? 'Kichunguzi Data' : 'Data Explorer'}
+              
+              <div className="min-w-0">
+                <h1 className="font-display text-sm sm:text-xl font-bold text-foreground flex items-center gap-1 sm:gap-2">
+                  <span className="bg-gradient-to-r from-primary to-emerald-600 bg-clip-text text-transparent truncate">
+                    {isMobile ? (
+                      lang === 'sw' ? 'Kichunguzi' : 'Explorer'
+                    ) : (
+                      lang === 'sw' ? 'Kichunguzi Data' : 'Data Explorer'
+                    )}
                   </span>
-                  <span className="text-xs font-normal bg-primary/10 text-primary px-2 py-0.5 rounded-full border border-primary/20">
-                    {lang === 'sw' ? 'Beta' : 'Beta'}
+                  <span className="text-[8px] sm:text-xs font-normal bg-primary/10 text-primary px-1.5 sm:px-2 py-0.5 rounded-full border border-primary/20 flex-shrink-0">
+                    Beta
                   </span>
                 </h1>
-                <p className="text-xs text-muted-foreground hidden sm:block">
-                  {lang === 'sw' 
-                    ? 'Gundua, elewa, na pakua data kutoka Hifadhi ya Data ya Kenya'
-                    : 'Discover, visualise, and download data from Kenya\'s Sovereign Data Pool'}
-                </p>
+                {!isMobile && (
+                  <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block truncate">
+                    {lang === 'sw' 
+                      ? 'Gundua, elewa, na pakua data'
+                      : 'Discover, visualise, and download data'}
+                  </p>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              {/* AI Status */}
-              <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-primary/10 to-emerald-500/10 border border-primary/20">
-                <Brain className="h-3.5 w-3.5 text-primary animate-pulse" />
-                <span className="text-xs font-medium text-primary">
-                  {lang === 'sw' ? 'AI Imewashwa' : 'AI Active'}
+            {/* Right Controls */}
+            <div className="flex items-center gap-1 sm:gap-2 lg:gap-3">
+              {/* AI Status - Hidden on very small screens */}
+              <div className="hidden md:flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full bg-gradient-to-r from-primary/10 to-emerald-500/10 border border-primary/20">
+                <Brain className="h-3 sm:h-3.5 w-3 sm:w-3.5 text-primary animate-pulse" />
+                <span className="text-[9px] sm:text-xs font-medium text-primary hidden sm:inline">
+                  AI
                 </span>
-                <span className="relative flex h-2 w-2">
+                <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 sm:h-2 sm:w-2 bg-emerald-500"></span>
                 </span>
               </div>
 
-              {/* AI Confidence Badge */}
-              {aiConfidence > 0 && (
-                <span className={`text-[10px] px-2 py-1 rounded-full border flex items-center gap-1
+              {/* AI Confidence - Mobile Friendly */}
+              {aiConfidence > 0 && !isMobile && (
+                <span className={`text-[8px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full border flex items-center gap-1
                   ${getConfidenceColor(aiConfidence)}
                 `}>
-                  <CheckCircle2 className="h-3 w-3" />
-                  {Math.round(aiConfidence * 100)}% {lang === 'sw' ? 'uaminifu' : 'confidence'}
+                  <CheckCircle2 className="h-2 w-2 sm:h-3 sm:w-3" />
+                  <span className="hidden xs:inline">{Math.round(aiConfidence * 100)}%</span>
                 </span>
               )}
 
-              {/* Share Button */}
+              {/* Share Button - Hidden on mobile */}
               <button
                 onClick={handleShare}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs font-medium hover:bg-secondary/50 transition-colors"
+                className="hidden sm:inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-border/50 text-[10px] sm:text-xs font-medium hover:bg-secondary/50 transition-colors"
               >
-                <Share2 className="h-3.5 w-3.5" />
-                {lang === 'sw' ? 'Shiriki' : 'Share'}
+                <Share2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                <span className="hidden sm:inline">{lang === 'sw' ? 'Shiriki' : 'Share'}</span>
               </button>
 
-              {/* Total Counter */}
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-secondary/50 px-3 py-1.5 text-xs font-semibold text-foreground border border-border/50">
-                <Database className="h-3.5 w-3.5 text-primary" />
-                {displayIndicators.length} {lang === 'sw' ? 'viashiria' : 'indicators'}
-                <span className="text-[10px] text-muted-foreground">
-                  ({results.length} {lang === 'sw' ? 'rekodi' : 'records'})
+              {/* Total Counter - Mobile Friendly */}
+              <div className="inline-flex items-center gap-1 sm:gap-1.5 rounded-full bg-secondary/50 px-2 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-xs font-semibold text-foreground border border-border/50">
+                <Database className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-primary" />
+                <span className="hidden xs:inline">
+                  {displayIndicators.length}
+                </span>
+                <span className="text-[8px] sm:text-[10px] text-muted-foreground">
+                  ({results.length})
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Entity Level Filter */}
-          <div className="mt-3">
+          {/* Entity Level Filter - Mobile Optimized */}
+          <div className="mt-2 sm:mt-3 overflow-x-auto">
             <EntityLevelSelector
               selected={selectedEntityLevel}
               onChange={(level) => {
@@ -465,6 +483,7 @@ export default function DataExplorer() {
                 updateFilter('entityLevels', entityLevels);
               }}
               counts={entityCounts}
+              isMobile={isMobile}
             />
           </div>
         </div>
@@ -473,16 +492,16 @@ export default function DataExplorer() {
       {/* ============================================================ */}
       {/* MAIN CONTENT */}
       {/* ============================================================ */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* LEFT SIDEBAR - Domain Tree */}
-        <div className="hidden lg:block w-72 border-r border-border/50 bg-card/30 backdrop-blur-sm overflow-y-auto">
-          <div className="p-4">
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* LEFT SIDEBAR - Desktop */}
+        <div className="hidden lg:block w-64 xl:w-72 border-r border-border/50 bg-card/30 backdrop-blur-sm overflow-y-auto flex-shrink-0">
+          <div className="p-3 xl:p-4">
             <div className="flex items-center gap-2 mb-3">
-              <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary/10">
+              <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
                 <Globe className="h-3.5 w-3.5 text-primary" />
               </div>
-              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {lang === 'sw' ? 'Vikoa na Viashiria' : 'Domains & Indicators'}
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
+                {lang === 'sw' ? 'Vikoa' : 'Domains'}
               </h2>
             </div>
             <DomainTree
@@ -495,14 +514,67 @@ export default function DataExplorer() {
           </div>
         </div>
 
+        {/* MOBILE SIDEBAR - Overlay */}
+        <AnimatePresence>
+          {showMobileSidebar && isMobile && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
+              onClick={() => setShowMobileSidebar(false)}
+            />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showMobileSidebar && isMobile && (
+            <motion.div
+              initial={{ x: -280, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -280, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="mobile-sidebar fixed left-0 top-0 z-50 h-full w-72 bg-card/95 backdrop-blur-xl border-r border-border/50 shadow-2xl lg:hidden overflow-y-auto"
+            >
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                      <Globe className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="text-sm font-semibold text-foreground">
+                      {lang === 'sw' ? 'Vikoa' : 'Domains'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setShowMobileSidebar(false)}
+                    className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <DomainTree
+                  data={domainTree}
+                  selectedSubdomainId={filters.subdomainIds?.[0]}
+                  onSelectSubdomain={(subdomainId) => {
+                    updateFilter('subdomainIds', [subdomainId]);
+                    setShowMobileSidebar(false);
+                  }}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* ============================================================ */}
         {/* MAIN CONTENT AREA */}
         {/* ============================================================ */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* Search & Controls Bar */}
-          <div className="bg-card/50 backdrop-blur-sm border-b border-border/50 px-4 lg:px-6 py-3">
+          {/* Search & Controls Bar - Mobile Optimized */}
+          <div className="bg-card/50 backdrop-blur-sm border-b border-border/50 px-3 sm:px-4 lg:px-6 py-2 sm:py-3">
             <div className="max-w-full">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
                 <div className="flex-1 w-full">
                   <div className="relative">
                     <SearchBar
@@ -510,16 +582,17 @@ export default function DataExplorer() {
                       onChange={(query) => setSearchQuery(query)}
                       onSearch={handleAISearch}
                       isLoading={isLoading || isAISearching}
-                      placeholder={lang === 'sw'
-                        ? 'Tafuta viashiria au uliza AI...'
-                        : 'Search indicators or ask AI...'
+                      placeholder={isMobile 
+                        ? (lang === 'sw' ? 'Tafuta...' : 'Search...')
+                        : (lang === 'sw' ? 'Tafuta viashiria au uliza AI...' : 'Search indicators or ask AI...')
                       }
                       suggestions={filterOptions.domains?.map(d => d.name) || []}
                       className="w-full"
+                      isMobile={isMobile}
                     />
                     <button
                       onClick={toggleVoiceInput}
-                      className={`absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-all
+                      className={`absolute right-10 sm:right-12 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 rounded-full transition-all
                         ${isVoiceListening 
                           ? 'text-red-500 bg-red-100 animate-pulse' 
                           : 'text-muted-foreground hover:text-primary hover:bg-primary/10'
@@ -527,17 +600,17 @@ export default function DataExplorer() {
                       title={lang === 'sw' ? 'Ingiza kwa sauti' : 'Voice input'}
                     >
                       {isVoiceListening ? (
-                        <MicOff className="h-4 w-4" />
+                        <MicOff className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       ) : (
-                        <Mic className="h-4 w-4" />
+                        <Mic className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       )}
                     </button>
                     {isAISearching && (
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                        <div className="flex items-center gap-1.5">
-                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                          <span className="text-[10px] text-primary font-medium hidden sm:inline">
-                            {lang === 'sw' ? 'AI inatafuta...' : 'AI searching...'}
+                      <div className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2">
+                        <div className="flex items-center gap-1">
+                          <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-primary" />
+                          <span className="text-[8px] sm:text-[10px] text-primary font-medium hidden xs:inline">
+                            AI...
                           </span>
                         </div>
                       </div>
@@ -545,49 +618,50 @@ export default function DataExplorer() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                {/* Action Buttons - Mobile Optimized */}
+                <div className="flex items-center gap-1 sm:gap-2 shrink-0 w-full sm:w-auto justify-end">
                   <button
                     onClick={() => setShowAIChat(!showAIChat)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all
+                    className={`inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-[10px] sm:text-xs font-medium transition-all
                       ${showAIChat 
                         ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' 
                         : 'bg-secondary/50 text-muted-foreground hover:bg-secondary'
                       }`}
                   >
-                    <MessageSquare className="h-4 w-4" />
-                    {lang === 'sw' ? 'AI Chat' : 'AI Chat'}
+                    <MessageSquare className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    <span className="hidden xs:inline">{lang === 'sw' ? 'Chat' : 'Chat'}</span>
                   </button>
                   <button
                     onClick={() => setShowInsights(!showInsights)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all
+                    className={`inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-[10px] sm:text-xs font-medium transition-all
                       ${showInsights 
                         ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20' 
                         : 'bg-secondary/50 text-muted-foreground hover:bg-secondary'
                       }`}
                   >
-                    <Activity className="h-4 w-4" />
-                    {lang === 'sw' ? 'Uchambuzi' : 'Insights'}
+                    <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    <span className="hidden xs:inline">{lang === 'sw' ? 'Uchambuzi' : 'Insights'}</span>
                   </button>
                   <button
                     onClick={() => setIsFilterOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-secondary/50 text-muted-foreground hover:bg-secondary text-xs font-medium transition-all"
+                    className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-secondary/50 text-muted-foreground hover:bg-secondary text-[10px] sm:text-xs font-medium transition-all"
                   >
-                    <Filter className="h-4 w-4" />
-                    {lang === 'sw' ? 'Vichujio' : 'Filters'}
+                    <Filter className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    <span className="hidden xs:inline">{lang === 'sw' ? 'Vichujio' : 'Filters'}</span>
                   </button>
                 </div>
               </div>
 
-              {/* AI Query Display */}
+              {/* AI Query Display - Mobile Optimized */}
               {aiQuery && (
-                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/5 border border-primary/20">
-                    <Sparkles className="h-3 w-3 text-primary" />
-                    <span className="text-[10px] text-primary font-medium">
-                      {lang === 'sw' ? 'Swali la AI' : 'AI Query'}
+                <div className="mt-1.5 sm:mt-2 flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <div className="flex items-center gap-1 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-primary/5 border border-primary/20">
+                    <Sparkles className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-primary" />
+                    <span className="text-[8px] sm:text-[10px] text-primary font-medium">
+                      {lang === 'sw' ? 'AI' : 'AI'}
                     </span>
                   </div>
-                  <span className="text-xs text-muted-foreground italic">
+                  <span className="text-[10px] sm:text-xs text-muted-foreground italic truncate max-w-[120px] sm:max-w-[200px] md:max-w-none">
                     "{aiQuery}"
                   </span>
                   <button
@@ -597,27 +671,15 @@ export default function DataExplorer() {
                     <X className="h-3 w-3" />
                   </button>
                   {detectedGeography?.name && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 flex items-center gap-1">
-                      <MapPin className="h-2.5 w-2.5" />
-                      {detectedGeography.name}
-                    </span>
-                  )}
-                  {detectedIntent && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1
-                      ${detectedIntent === 'listing' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
-                        detectedIntent === 'trend' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
-                        detectedIntent === 'comparison' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20' :
-                        'bg-secondary text-muted-foreground'
-                      }`}
-                    >
-                      <Target className="h-2.5 w-2.5" />
-                      {detectedIntent}
+                    <span className="text-[8px] sm:text-[10px] px-1 sm:px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 flex items-center gap-1">
+                      <MapPin className="h-2 w-2 sm:h-2.5 sm:w-2.5" />
+                      <span className="hidden xs:inline">{detectedGeography.name}</span>
                     </span>
                   )}
                   {missingEntities && missingEntities.length > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1">
-                      <AlertCircle className="h-2.5 w-2.5" />
-                      {missingEntities.length} missing
+                    <span className="text-[8px] sm:text-[10px] px-1 sm:px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1">
+                      <AlertCircle className="h-2 w-2 sm:h-2.5 sm:w-2.5" />
+                      <span className="hidden xs:inline">{missingEntities.length}</span>
                     </span>
                   )}
                 </div>
@@ -626,7 +688,7 @@ export default function DataExplorer() {
           </div>
 
           {/* ============================================================ */}
-          {/* AI CHAT & INSIGHTS PANELS */}
+          {/* AI CHAT & INSIGHTS PANELS - Mobile Optimized */}
           {/* ============================================================ */}
           <AnimatePresence>
             {(showAIChat || showInsights) && (
@@ -637,7 +699,7 @@ export default function DataExplorer() {
                 transition={{ duration: 0.3 }}
                 className="overflow-hidden border-b border-border/50 bg-card/30 backdrop-blur-sm"
               >
-                <div className="grid lg:grid-cols-2 gap-4 p-4 max-h-80 overflow-y-auto">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 p-3 sm:p-4 max-h-64 sm:max-h-80 overflow-y-auto">
                   {showAIChat && (
                     <AIChatPanel
                       currentFilters={filters}
@@ -651,7 +713,7 @@ export default function DataExplorer() {
                       conversations={conversations}
                       loadConversationsList={loadConversationsList}
                       saveStructuredTurn={saveStructuredTurn}
-                      className="min-h-[200px]"
+                      className="min-h-[150px] sm:min-h-[200px]"
                       lang={lang}
                     />
                   )}
@@ -664,7 +726,7 @@ export default function DataExplorer() {
                       detectedGeography={detectedGeography}
                       detectedIntent={detectedIntent}
                       onGenerate={handleAIChatInsights}
-                      className="min-h-[200px]"
+                      className="min-h-[150px] sm:min-h-[200px]"
                       lang={lang}
                     />
                   )}
@@ -674,12 +736,12 @@ export default function DataExplorer() {
           </AnimatePresence>
 
           {/* ============================================================ */}
-          {/* CONTROL BAR */}
+          {/* CONTROL BAR - Mobile Optimized */}
           {/* ============================================================ */}
-          <div className="bg-card/30 backdrop-blur-sm border-b border-border/50 px-4 lg:px-6 py-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              {/* View Toggle */}
-              <div className="flex items-center gap-1 rounded-lg bg-secondary/30 p-0.5 border border-border/50">
+          <div className="bg-card/30 backdrop-blur-sm border-b border-border/50 px-2 sm:px-4 lg:px-6 py-1.5 sm:py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-2">
+              {/* View Toggle - Mobile Friendly */}
+              <div className="flex items-center gap-0.5 rounded-lg bg-secondary/30 p-0.5 border border-border/50">
                 {viewModes.map((mode) => {
                   const Icon = mode.icon;
                   const isActive = viewMode === mode.id;
@@ -687,50 +749,45 @@ export default function DataExplorer() {
                     <button
                       key={mode.id}
                       onClick={() => setViewMode(mode.id)}
-                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5
+                      className={`px-1.5 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-xs font-medium transition-all flex items-center gap-0.5 sm:gap-1.5
                         ${isActive 
                           ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' 
                           : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                         }`}
                     >
-                      <Icon className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">{mode.label}</span>
+                      <Icon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      <span className="hidden xs:inline">{isMobile ? mode.label.substring(0, 3) : mode.label}</span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* Result Counter */}
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  {displayIndicators.length > 0 ? 1 : 0}
+              {/* Result Counter - Mobile Friendly */}
+              <div className="text-[10px] sm:text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{displayIndicators.length}</span>
+                <span className="hidden xs:inline">
+                  {' '}{lang === 'sw' ? 'ya' : 'of'} {displayIndicators.length}
                 </span>
-                {' - '}
-                <span className="font-medium text-foreground">
-                  {displayIndicators.length}
-                </span>
-                {' '}{lang === 'sw' ? 'ya' : 'of'} {displayIndicators.length} {lang === 'sw' ? 'viashiria' : 'indicators'}
-                <span className="text-[10px] text-muted-foreground/60 ml-2">
-                  ({results.length} {lang === 'sw' ? 'rekodi' : 'records'})
+                <span className="text-[8px] sm:text-[10px] text-muted-foreground/60 ml-1 sm:ml-2">
+                  ({results.length})
                 </span>
               </div>
 
-              {/* Sort & Page Size */}
-              <div className="flex items-center gap-2">
+              {/* Sort & Page Size - Mobile Optimized */}
+              <div className="flex items-center gap-1 sm:gap-2">
                 <select
                   value={filters.sortBy}
                   onChange={(e) => handleSortChange(e.target.value)}
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 py-1 text-xs outline-none focus:ring-1 focus:ring-primary"
+                  className="h-6 sm:h-8 rounded-lg border border-input bg-background px-1.5 sm:px-2.5 py-0.5 sm:py-1 text-[9px] sm:text-xs outline-none focus:ring-1 focus:ring-primary max-w-[80px] sm:max-w-none"
                 >
-                  <option value="relevance">{lang === 'sw' ? 'Umuhimu' : 'Relevance'}</option>
-                  <option value="name">{lang === 'sw' ? 'Jina' : 'Name'}</option>
-                  <option value="year">{lang === 'sw' ? 'Mwaka' : 'Year'}</option>
-                  <option value="source">{lang === 'sw' ? 'Chanzo' : 'Source'}</option>
+                  <option value="relevance">{isMobile ? 'Rel' : (lang === 'sw' ? 'Umuhimu' : 'Relevance')}</option>
+                  <option value="name">{isMobile ? 'Jina' : (lang === 'sw' ? 'Jina' : 'Name')}</option>
+                  <option value="year">{isMobile ? 'Mwaka' : (lang === 'sw' ? 'Mwaka' : 'Year')}</option>
                 </select>
                 <select
                   value={filters.limit}
                   onChange={(e) => handlePageSizeChange(parseInt(e.target.value))}
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 py-1 text-xs outline-none focus:ring-1 focus:ring-primary"
+                  className="h-6 sm:h-8 rounded-lg border border-input bg-background px-1.5 sm:px-2.5 py-0.5 sm:py-1 text-[9px] sm:text-xs outline-none focus:ring-1 focus:ring-primary"
                 >
                   {[20, 50, 100].map((size) => (
                     <option key={size} value={size}>{size}</option>
@@ -741,20 +798,20 @@ export default function DataExplorer() {
           </div>
 
           {/* ============================================================ */}
-          {/* RESULTS AREA */}
+          {/* RESULTS AREA - Mobile Optimized */}
           {/* ============================================================ */}
-          <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-6">
-            <div className="max-w-7xl mx-auto space-y-6">
+          <div className="flex-1 overflow-y-auto px-2 sm:px-4 lg:px-6 py-3 sm:py-6">
+            <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
               {/* Loading State */}
               {isLoading && !displayIndicators.length && (
-                <div className="flex flex-col items-center justify-center py-20">
+                <div className="flex flex-col items-center justify-center py-12 sm:py-20">
                   <div className="relative">
-                    <div className="h-12 w-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+                    <div className="h-10 w-10 sm:h-12 sm:w-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <Database className="h-5 w-5 text-primary/60" />
+                      <Database className="h-4 w-4 sm:h-5 sm:w-5 text-primary/60" />
                     </div>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-4">
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-3 sm:mt-4">
                     {lang === 'sw' ? 'Inapakia data...' : 'Loading data...'}
                   </p>
                 </div>
@@ -762,14 +819,14 @@ export default function DataExplorer() {
 
               {/* Error State */}
               {error && (
-                <div className="flex flex-col items-center justify-center py-20">
-                  <div className="rounded-full bg-red-500/10 p-4 mb-4">
-                    <X className="h-8 w-8 text-red-500" />
+                <div className="flex flex-col items-center justify-center py-12 sm:py-20">
+                  <div className="rounded-full bg-red-500/10 p-3 sm:p-4 mb-3 sm:mb-4">
+                    <X className="h-6 w-6 sm:h-8 sm:w-8 text-red-500" />
                   </div>
-                  <p className="text-sm text-red-500 font-medium">{error}</p>
+                  <p className="text-xs sm:text-sm text-red-500 font-medium">{error}</p>
                   <button
                     onClick={() => search()}
-                    className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90"
+                    className="mt-3 sm:mt-4 px-3 sm:px-4 py-1.5 sm:py-2 bg-primary text-primary-foreground rounded-lg text-xs sm:text-sm font-medium hover:bg-primary/90"
                   >
                     {lang === 'sw' ? 'Jaribu Tena' : 'Retry'}
                   </button>
@@ -779,9 +836,9 @@ export default function DataExplorer() {
               {/* Results */}
               {!isLoading && !error && displayIndicators.length > 0 && (
                 <>
-                  {/* Card View */}
+                  {/* Card View - Mobile Optimized */}
                   {viewMode === 'card' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
                       {displayIndicators.map((indicator) => (
                         <DataCard
                           key={indicator.indicator_id || indicator.id || indicator.name}
@@ -790,18 +847,22 @@ export default function DataExplorer() {
                           onDownload={handleDownload}
                           onFavourite={handleFavourite}
                           isFavourite={isFavourite(indicator)}
+                          isMobile={isMobile}
                         />
                       ))}
                     </div>
                   )}
 
-                  {/* Table View */}
+                  {/* Table View - Mobile Responsive */}
                   {viewMode === 'table' && (
-                    <TableView
-                      data={displayIndicators}
-                      onRowClick={handleViewIndicator}
-                      lang={lang}
-                    />
+                    <div className="overflow-x-auto -mx-2 sm:mx-0">
+                      <TableView
+                        data={displayIndicators}
+                        onRowClick={handleViewIndicator}
+                        lang={lang}
+                        isMobile={isMobile}
+                      />
+                    </div>
                   )}
 
                   {/* Chart View */}
@@ -813,34 +874,36 @@ export default function DataExplorer() {
                         onSelectIndicator={setSelectedIndicatorId}
                         onExport={handleDownload}
                         lang={lang}
+                        height={isMobile ? 300 : 350}
                       />
                     </div>
                   )}
 
-                  {/* Pagination */}
+                  {/* Pagination - Mobile Optimized */}
                   {totalPages > 1 && (
-                    <div className="flex items-center justify-between gap-4 pt-4">
+                    <div className="flex items-center justify-between gap-2 sm:gap-4 pt-3 sm:pt-4">
                       <button
                         onClick={() => goToPage(currentPage - 1)}
                         disabled={currentPage <= 1}
-                        className="px-4 py-2 rounded-lg border border-border/50 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary/50 transition-colors"
+                        className="px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-border/50 text-[10px] sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary/50 transition-colors"
                       >
-                        <span className="flex items-center gap-2">
-                          <ChevronUp className="h-4 w-4 rotate-90" />
-                          {lang === 'sw' ? 'Iliyopita' : 'Previous'}
+                        <span className="flex items-center gap-1 sm:gap-2">
+                          <ChevronUp className="h-3 w-3 sm:h-4 sm:w-4 rotate-90" />
+                          <span className="hidden xs:inline">{lang === 'sw' ? 'Iliyopita' : 'Previous'}</span>
                         </span>
                       </button>
-                      <span className="text-sm text-muted-foreground">
-                        {lang === 'sw' ? 'Ukurasa' : 'Page'} <span className="font-medium text-foreground">{currentPage}</span> {lang === 'sw' ? 'ya' : 'of'} <span className="font-medium text-foreground">{totalPages}</span>
+                      <span className="text-[10px] sm:text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">{currentPage}</span>
+                        <span className="hidden xs:inline"> {lang === 'sw' ? 'ya' : 'of'} <span className="font-medium text-foreground">{totalPages}</span></span>
                       </span>
                       <button
                         onClick={() => goToPage(currentPage + 1)}
                         disabled={currentPage >= totalPages}
-                        className="px-4 py-2 rounded-lg border border-border/50 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary/50 transition-colors"
+                        className="px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-border/50 text-[10px] sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary/50 transition-colors"
                       >
-                        <span className="flex items-center gap-2">
-                          {lang === 'sw' ? 'Ijayo' : 'Next'}
-                          <ChevronUp className="h-4 w-4 -rotate-90" />
+                        <span className="flex items-center gap-1 sm:gap-2">
+                          <span className="hidden xs:inline">{lang === 'sw' ? 'Ijayo' : 'Next'}</span>
+                          <ChevronUp className="h-3 w-3 sm:h-4 sm:w-4 -rotate-90" />
                         </span>
                       </button>
                     </div>
@@ -848,37 +911,37 @@ export default function DataExplorer() {
                 </>
               )}
 
-              {/* Empty State */}
+              {/* Empty State - Mobile Optimized */}
               {!isLoading && !error && displayIndicators.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20">
+                <div className="flex flex-col items-center justify-center py-12 sm:py-20">
                   <div className="relative">
-                    <div className="h-20 w-20 rounded-full bg-primary/5 flex items-center justify-center">
-                      <Database className="h-10 w-10 text-muted-foreground/30" />
+                    <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full bg-primary/5 flex items-center justify-center">
+                      <Database className="h-8 w-8 sm:h-10 sm:w-10 text-muted-foreground/30" />
                     </div>
                     <div className="absolute -right-2 -top-2">
-                      <Sparkles className="h-5 w-5 text-amber-400" />
+                      <Sparkles className="h-4 w-4 sm:h-5 sm:w-5 text-amber-400" />
                     </div>
                   </div>
-                  <h3 className="text-lg font-semibold text-foreground mt-4">
+                  <h3 className="text-base sm:text-lg font-semibold text-foreground mt-3 sm:mt-4">
                     {lang === 'sw' ? 'Hakuna matokeo' : 'No results found'}
                   </h3>
-                  <p className="text-sm text-muted-foreground max-w-md text-center mt-1">
+                  <p className="text-xs sm:text-sm text-muted-foreground max-w-md text-center mt-1 px-4">
                     {lang === 'sw'
                       ? 'Jaribu kubadilisha vichujio, maneno ya utafutaji, au uliza AI kwa msaada.'
                       : 'Try adjusting your filters, search terms, or ask AI for help.'}
                   </p>
-                  <div className="flex gap-3 mt-4">
+                  <div className="flex flex-wrap gap-2 sm:gap-3 mt-3 sm:mt-4">
                     <button
                       onClick={clearFilters}
-                      className="px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 transition-colors"
+                      className="px-3 sm:px-4 py-1.5 sm:py-2 bg-secondary text-foreground rounded-lg text-xs sm:text-sm font-medium hover:bg-secondary/80 transition-colors"
                     >
-                      {lang === 'sw' ? 'Futa vichujio vyote' : 'Clear all filters'}
+                      {lang === 'sw' ? 'Futa vichujio' : 'Clear filters'}
                     </button>
                     <button
                       onClick={() => setShowAIChat(true)}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
+                      className="px-3 sm:px-4 py-1.5 sm:py-2 bg-primary text-primary-foreground rounded-lg text-xs sm:text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1 sm:gap-2"
                     >
-                      <Brain className="h-4 w-4" />
+                      <Brain className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       {lang === 'sw' ? 'Uliza AI' : 'Ask AI'}
                     </button>
                   </div>
@@ -890,7 +953,7 @@ export default function DataExplorer() {
       </div>
 
       {/* ============================================================ */}
-      {/* FILTER DRAWER */}
+      {/* FILTER DRAWER - Mobile Optimized */}
       {/* ============================================================ */}
       <FilterDrawer
         isOpen={isFilterOpen}
@@ -899,6 +962,7 @@ export default function DataExplorer() {
         filterOptions={filterOptions}
         onApplyFilters={handleApplyFilters}
         onClearFilters={clearFilters}
+        isMobile={isMobile}
       />
     </div>
   );
