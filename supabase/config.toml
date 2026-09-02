@@ -34,7 +34,8 @@ enabled = true
 enabled = true
 port = 54323
 
-[inbucket]
+# FIX: Replace [inbucket] with [local_smtp]
+[local_smtp]
 enabled = true
 port = 54324
 
