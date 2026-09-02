@@ -55,10 +55,6 @@ enable_confirmations = true
 secure_password_change = true
 max_frequency = "1s"
 
-[auth.email.template.invite]
-subject = "You're invited to KEDIS UltraEconomist"
-content_path = "./supabase/templates/invite.html"
-
 [auth.external.google]
 enabled = false
 
