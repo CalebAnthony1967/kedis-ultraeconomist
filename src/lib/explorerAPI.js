@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * KEDIS Data Explorer – API Functions
+ * KEDIS Data Explorer – API Functions (Updated with entityLevels)
  * ============================================================================
  * All Supabase RPC calls for the Data Explorer
  * ============================================================================
@@ -9,7 +9,7 @@
 import { supabase } from './supabaseClient';
 
 /**
- * Search indicators with filters
+ * Search indicators with filters (including entity_level)
  */
 export async function searchExplorer({
   query = '',
@@ -20,7 +20,7 @@ export async function searchExplorer({
   sourceMcdas = [],
   yearStart = null,
   yearEnd = null,
-  entityLevels = [],
+  entityLevels = [], // NEW: ['National', 'County', 'Sub-County', 'Ward']
   sortBy = 'relevance',
   sortOrder = 'desc',
   limit = 20,
@@ -35,7 +35,7 @@ export async function searchExplorer({
     p_source_mcdas: sourceMcdas.length > 0 ? sourceMcdas : null,
     p_year_start: yearStart,
     p_year_end: yearEnd,
-    p_entity_level: entityLevels.length > 0 ? entityLevels : null,
+    p_entity_level: entityLevels.length > 0 ? entityLevels : null, // NEW
     p_sort_by: sortBy,
     p_sort_order: sortOrder,
     p_limit: limit,
@@ -226,4 +226,24 @@ export async function getAllFilterOptions() {
     pillars,
     counties,
   };
+}
+
+/**
+ * Get entity level counts for current results
+ */
+export function getEntityLevelCounts(results) {
+  const counts = {
+    all: results.length,
+    National: 0,
+    County: 0,
+    'Sub-County': 0,
+    Ward: 0,
+  };
+  results.forEach(item => {
+    const level = item.entity_level || 'National';
+    if (counts[level] !== undefined) {
+      counts[level]++;
+    }
+  });
+  return counts;
 }
