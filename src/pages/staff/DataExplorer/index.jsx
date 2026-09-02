@@ -30,7 +30,6 @@ import {
   Globe,
   MapPin,
   ChevronUp,
-  ChevronDown,
   Share2,
   Link2,
   Zap,
@@ -134,10 +133,10 @@ export default function DataExplorer() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedIndicatorId, setSelectedIndicatorId] = useState(null);
   const [selectedEntityLevel, setSelectedEntityLevel] = useState('all');
-  const [showAIChat, setShowAIChat] = useState(false); // Default closed on mobile
+  const [showAIChat, setShowAIChat] = useState(false);
   const [isVoiceListening, setIsVoiceListening] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showInsights, setShowInsights] = useState(false); // Default closed on mobile
+  const [showInsights, setShowInsights] = useState(false);
   const [aiQuery, setAiQuery] = useState('');
   const [favourites, setFavourites] = useState([]);
   const [aiInsights, setAiInsights] = useState([]);
@@ -392,7 +391,7 @@ export default function DataExplorer() {
               {/* Menu Button - Mobile Only */}
               <button
                 onClick={() => setShowMobileSidebar(!showMobileSidebar)}
-                className="lg:hidden p-1.5 rounded-lg hover:bg-secondary/50 transition-colors menu-button"
+                className="lg:hidden p-1.5 rounded-lg hover:bg-secondary/50 transition-colors menu-button flex-shrink-0"
                 aria-label="Toggle menu"
               >
                 <Menu className="h-5 w-5 text-foreground" />
@@ -405,33 +404,25 @@ export default function DataExplorer() {
               <div className="min-w-0">
                 <h1 className="font-display text-sm sm:text-xl font-bold text-foreground flex items-center gap-1 sm:gap-2">
                   <span className="bg-gradient-to-r from-primary to-emerald-600 bg-clip-text text-transparent truncate">
-                    {isMobile ? (
-                      lang === 'sw' ? 'Kichunguzi' : 'Explorer'
-                    ) : (
-                      lang === 'sw' ? 'Kichunguzi Data' : 'Data Explorer'
-                    )}
+                    {lang === 'sw' ? 'Kichunguzi Data' : 'Data Explorer'}
                   </span>
-                  <span className="text-[8px] sm:text-xs font-normal bg-primary/10 text-primary px-1.5 sm:px-2 py-0.5 rounded-full border border-primary/20 flex-shrink-0">
-                    Beta
-                  </span>
+                  {/* Beta badge removed as requested */}
                 </h1>
-                {!isMobile && (
-                  <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block truncate">
-                    {lang === 'sw' 
-                      ? 'Gundua, elewa, na pakua data'
-                      : 'Discover, visualise, and download data'}
-                  </p>
-                )}
+                <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block truncate">
+                  {lang === 'sw' 
+                    ? 'Gundua, elewa, na pakua data kutoka Hifadhi ya Data ya Kenya'
+                    : 'Discover, visualise, and download data from Kenya\'s Sovereign Data Pool'}
+                </p>
               </div>
             </div>
 
             {/* Right Controls */}
-            <div className="flex items-center gap-1 sm:gap-2 lg:gap-3">
+            <div className="flex items-center gap-1 sm:gap-2 lg:gap-3 flex-shrink-0">
               {/* AI Status - Hidden on very small screens */}
-              <div className="hidden md:flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full bg-gradient-to-r from-primary/10 to-emerald-500/10 border border-primary/20">
+              <div className="hidden sm:flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full bg-gradient-to-r from-primary/10 to-emerald-500/10 border border-primary/20">
                 <Brain className="h-3 sm:h-3.5 w-3 sm:w-3.5 text-primary animate-pulse" />
-                <span className="text-[9px] sm:text-xs font-medium text-primary hidden sm:inline">
-                  AI
+                <span className="text-[9px] sm:text-xs font-medium text-primary hidden xs:inline">
+                  {lang === 'sw' ? 'AI Imewashwa' : 'AI Active'}
                 </span>
                 <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -440,26 +431,28 @@ export default function DataExplorer() {
               </div>
 
               {/* AI Confidence - Mobile Friendly */}
-              {aiConfidence > 0 && !isMobile && (
+              {aiConfidence > 0 && (
                 <span className={`text-[8px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full border flex items-center gap-1
                   ${getConfidenceColor(aiConfidence)}
+                  hidden md:flex
                 `}>
                   <CheckCircle2 className="h-2 w-2 sm:h-3 sm:w-3" />
                   <span className="hidden xs:inline">{Math.round(aiConfidence * 100)}%</span>
                 </span>
               )}
 
-              {/* Share Button - Hidden on mobile */}
+              {/* Share Button */}
               <button
                 onClick={handleShare}
-                className="hidden sm:inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-border/50 text-[10px] sm:text-xs font-medium hover:bg-secondary/50 transition-colors"
+                className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-border/50 text-[10px] sm:text-xs font-medium hover:bg-secondary/50 transition-colors"
+                title={lang === 'sw' ? 'Shiriki' : 'Share'}
               >
                 <Share2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                <span className="hidden sm:inline">{lang === 'sw' ? 'Shiriki' : 'Share'}</span>
+                <span className="hidden xs:inline">{lang === 'sw' ? 'Shiriki' : 'Share'}</span>
               </button>
 
-              {/* Total Counter - Mobile Friendly */}
-              <div className="inline-flex items-center gap-1 sm:gap-1.5 rounded-full bg-secondary/50 px-2 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-xs font-semibold text-foreground border border-border/50">
+              {/* Total Counter */}
+              <div className="inline-flex items-center gap-1 sm:gap-1.5 rounded-full bg-secondary/50 px-2 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-xs font-semibold text-foreground border border-border/50 flex-shrink-0">
                 <Database className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-primary" />
                 <span className="hidden xs:inline">
                   {displayIndicators.length}
@@ -471,7 +464,7 @@ export default function DataExplorer() {
             </div>
           </div>
 
-          {/* Entity Level Filter - Mobile Optimized */}
+          {/* Entity Level Filter - Mobile Optimized (Level: removed) */}
           <div className="mt-2 sm:mt-3 overflow-x-auto">
             <EntityLevelSelector
               selected={selectedEntityLevel}
@@ -484,6 +477,7 @@ export default function DataExplorer() {
               }}
               counts={entityCounts}
               isMobile={isMobile}
+              hideLabel={true}
             />
           </div>
         </div>
@@ -501,7 +495,7 @@ export default function DataExplorer() {
                 <Globe className="h-3.5 w-3.5 text-primary" />
               </div>
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
-                {lang === 'sw' ? 'Vikoa' : 'Domains'}
+                {lang === 'sw' ? 'Vikoa na Viashiria' : 'Domains & Indicators'}
               </h2>
             </div>
             <DomainTree
@@ -544,7 +538,7 @@ export default function DataExplorer() {
                       <Globe className="h-4 w-4 text-primary" />
                     </div>
                     <span className="text-sm font-semibold text-foreground">
-                      {lang === 'sw' ? 'Vikoa' : 'Domains'}
+                      {lang === 'sw' ? 'Vikoa na Viashiria' : 'Domains & Indicators'}
                     </span>
                   </div>
                   <button
@@ -582,9 +576,9 @@ export default function DataExplorer() {
                       onChange={(query) => setSearchQuery(query)}
                       onSearch={handleAISearch}
                       isLoading={isLoading || isAISearching}
-                      placeholder={isMobile 
-                        ? (lang === 'sw' ? 'Tafuta...' : 'Search...')
-                        : (lang === 'sw' ? 'Tafuta viashiria au uliza AI...' : 'Search indicators or ask AI...')
+                      placeholder={lang === 'sw'
+                        ? 'Tafuta viashiria au uliza AI...'
+                        : 'Search indicators or ask AI...'
                       }
                       suggestions={filterOptions.domains?.map(d => d.name) || []}
                       className="w-full"
@@ -610,7 +604,7 @@ export default function DataExplorer() {
                         <div className="flex items-center gap-1">
                           <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-primary" />
                           <span className="text-[8px] sm:text-[10px] text-primary font-medium hidden xs:inline">
-                            AI...
+                            {lang === 'sw' ? 'AI inatafuta...' : 'AI searching...'}
                           </span>
                         </div>
                       </div>
@@ -629,7 +623,7 @@ export default function DataExplorer() {
                       }`}
                   >
                     <MessageSquare className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    <span className="hidden xs:inline">{lang === 'sw' ? 'Chat' : 'Chat'}</span>
+                    <span className="hidden xs:inline">{lang === 'sw' ? 'AI Chat' : 'AI Chat'}</span>
                   </button>
                   <button
                     onClick={() => setShowInsights(!showInsights)}
@@ -658,7 +652,7 @@ export default function DataExplorer() {
                   <div className="flex items-center gap-1 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-primary/5 border border-primary/20">
                     <Sparkles className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-primary" />
                     <span className="text-[8px] sm:text-[10px] text-primary font-medium">
-                      {lang === 'sw' ? 'AI' : 'AI'}
+                      {lang === 'sw' ? 'Swali la AI' : 'AI Query'}
                     </span>
                   </div>
                   <span className="text-[10px] sm:text-xs text-muted-foreground italic truncate max-w-[120px] sm:max-w-[200px] md:max-w-none">
@@ -676,10 +670,22 @@ export default function DataExplorer() {
                       <span className="hidden xs:inline">{detectedGeography.name}</span>
                     </span>
                   )}
+                  {detectedIntent && (
+                    <span className={`text-[8px] sm:text-[10px] px-1 sm:px-1.5 py-0.5 rounded-full border flex items-center gap-1
+                      ${detectedIntent === 'listing' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
+                        detectedIntent === 'trend' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                        detectedIntent === 'comparison' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20' :
+                        'bg-secondary text-muted-foreground'
+                      }`}
+                    >
+                      <Target className="h-2 w-2 sm:h-2.5 sm:w-2.5" />
+                      <span className="hidden xs:inline">{detectedIntent}</span>
+                    </span>
+                  )}
                   {missingEntities && missingEntities.length > 0 && (
                     <span className="text-[8px] sm:text-[10px] px-1 sm:px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 flex items-center gap-1">
                       <AlertCircle className="h-2 w-2 sm:h-2.5 sm:w-2.5" />
-                      <span className="hidden xs:inline">{missingEntities.length}</span>
+                      <span className="hidden xs:inline">{missingEntities.length} missing</span>
                     </span>
                   )}
                 </div>
@@ -756,7 +762,7 @@ export default function DataExplorer() {
                         }`}
                     >
                       <Icon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                      <span className="hidden xs:inline">{isMobile ? mode.label.substring(0, 3) : mode.label}</span>
+                      <span className="hidden xs:inline">{mode.label}</span>
                     </button>
                   );
                 })}
@@ -769,7 +775,7 @@ export default function DataExplorer() {
                   {' '}{lang === 'sw' ? 'ya' : 'of'} {displayIndicators.length}
                 </span>
                 <span className="text-[8px] sm:text-[10px] text-muted-foreground/60 ml-1 sm:ml-2">
-                  ({results.length})
+                  ({results.length} {lang === 'sw' ? 'rekodi' : 'records'})
                 </span>
               </div>
 
@@ -780,9 +786,10 @@ export default function DataExplorer() {
                   onChange={(e) => handleSortChange(e.target.value)}
                   className="h-6 sm:h-8 rounded-lg border border-input bg-background px-1.5 sm:px-2.5 py-0.5 sm:py-1 text-[9px] sm:text-xs outline-none focus:ring-1 focus:ring-primary max-w-[80px] sm:max-w-none"
                 >
-                  <option value="relevance">{isMobile ? 'Rel' : (lang === 'sw' ? 'Umuhimu' : 'Relevance')}</option>
-                  <option value="name">{isMobile ? 'Jina' : (lang === 'sw' ? 'Jina' : 'Name')}</option>
-                  <option value="year">{isMobile ? 'Mwaka' : (lang === 'sw' ? 'Mwaka' : 'Year')}</option>
+                  <option value="relevance">{lang === 'sw' ? 'Umuhimu' : 'Relevance'}</option>
+                  <option value="name">{lang === 'sw' ? 'Jina' : 'Name'}</option>
+                  <option value="year">{lang === 'sw' ? 'Mwaka' : 'Year'}</option>
+                  <option value="source">{lang === 'sw' ? 'Chanzo' : 'Source'}</option>
                 </select>
                 <select
                   value={filters.limit}
@@ -874,7 +881,7 @@ export default function DataExplorer() {
                         onSelectIndicator={setSelectedIndicatorId}
                         onExport={handleDownload}
                         lang={lang}
-                        height={isMobile ? 300 : 350}
+                        height={isMobile ? 280 : 350}
                       />
                     </div>
                   )}
@@ -935,7 +942,7 @@ export default function DataExplorer() {
                       onClick={clearFilters}
                       className="px-3 sm:px-4 py-1.5 sm:py-2 bg-secondary text-foreground rounded-lg text-xs sm:text-sm font-medium hover:bg-secondary/80 transition-colors"
                     >
-                      {lang === 'sw' ? 'Futa vichujio' : 'Clear filters'}
+                      {lang === 'sw' ? 'Futa vichujio vyote' : 'Clear all filters'}
                     </button>
                     <button
                       onClick={() => setShowAIChat(true)}
