@@ -6,11 +6,17 @@ import DomainTree from './components/DomainTree';
 import DataCard from './components/DataCard';
 import ControlBar from './components/ControlBar';
 import FilterDrawer from './components/FilterDrawer';
+import ChartView from './components/ChartView';
+import EntityLevelSelector from './components/EntityLevelSelector';
 import {
   Database,
   Loader2,
   X,
   Filter,
+  BarChart3,
+  MapPin,
+  TrendingUp,
+  Activity
 } from 'lucide-react';
 
 export default function DataExplorer() {
@@ -33,6 +39,20 @@ export default function DataExplorer() {
 
   const [viewMode, setViewMode] = useState('card');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [selectedIndicatorId, setSelectedIndicatorId] = useState(null);
+  const [chartData, setChartData] = useState([]);
+
+  // Entity level options
+  const entityLevelOptions = [
+    { value: 'all', label: lang === 'sw' ? 'Zote' : 'All Levels' },
+    { value: 'National', label: lang === 'sw' ? 'Taifa' : 'National' },
+    { value: 'County', label: lang === 'sw' ? 'Kaunti' : 'County' },
+    { value: 'Sub-County', label: lang === 'sw' ? 'Tarafa' : 'Sub-County' },
+    { value: 'Ward', label: lang === 'sw' ? 'Wadi' : 'Ward' },
+  ];
+
+  // Entity level filter state
+  const [selectedEntityLevel, setSelectedEntityLevel] = useState('all');
 
   // Initial search on load
   useEffect(() => {
@@ -41,6 +61,12 @@ export default function DataExplorer() {
 
   // Search when filters change
   useEffect(() => {
+    // Apply entity level filter
+    const entityLevels = selectedEntityLevel === 'all' 
+      ? ['National', 'County', 'Sub-County', 'Ward']
+      : [selectedEntityLevel];
+    
+    updateFilter('entityLevels', entityLevels);
     search();
   }, [
     filters.domainIds,
@@ -50,10 +76,10 @@ export default function DataExplorer() {
     filters.sourceMcdas,
     filters.yearStart,
     filters.yearEnd,
-    filters.entityLevels,
     filters.sortBy,
     filters.limit,
     filters.offset,
+    selectedEntityLevel,
   ]);
 
   const handleSearch = (query) => {
@@ -70,13 +96,17 @@ export default function DataExplorer() {
   };
 
   const handleViewIndicator = (indicator) => {
-    console.log('View indicator:', indicator);
-    // Navigate to detail view or open modal
+    setSelectedIndicatorId(indicator.id);
+    // Scroll to chart section
+    const chartSection = document.getElementById('chart-section');
+    if (chartSection) {
+      chartSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const handleDownload = (indicator) => {
     console.log('Download indicator:', indicator);
-    // Download CSV/Excel
+    // Implement download logic
   };
 
   const handleApplyFilters = (newFilters) => {
@@ -87,6 +117,14 @@ export default function DataExplorer() {
   const currentPage = Math.floor(filters.offset / filters.limit) + 1;
   const totalPages = Math.ceil(totalCount / filters.limit);
 
+  // Count by entity level for summary
+  const entityCounts = {
+    National: results.filter(r => r.entity_level === 'National').length,
+    County: results.filter(r => r.entity_level === 'County').length,
+    SubCounty: results.filter(r => r.entity_level === 'Sub-County').length,
+    Ward: results.filter(r => r.entity_level === 'Ward').length,
+  };
+
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Header */}
@@ -96,12 +134,43 @@ export default function DataExplorer() {
             <div>
               <h1 className="font-display text-xl font-bold text-foreground">Data Explorer</h1>
               <p className="text-xs text-muted-foreground">
-                Discover, visualise, and download indicators from Kenya's Sovereign Data Pool
+                {lang === 'sw' 
+                  ? 'Gundua, elewa, na pakua data kutoka kwenye Hifadhi ya Data ya Kenya'
+                  : 'Discover, visualise, and download data from Kenya\'s Sovereign Data Pool'}
               </p>
             </div>
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              <Database className="h-3.5 w-3.5" />
-              {totalCount.toLocaleString()} indicators
+            <div className="flex items-center gap-3">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                <Database className="h-3.5 w-3.5" />
+                {totalCount.toLocaleString()} indicators
+              </div>
+            </div>
+          </div>
+
+          {/* Entity Level Filter - National vs County */}
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground">
+              {lang === 'sw' ? 'Kiwango:' : 'Level:'}
+            </span>
+            <div className="flex gap-1">
+              {entityLevelOptions.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setSelectedEntityLevel(option.value)}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all
+                    ${selectedEntityLevel === option.value
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                    }`}
+                >
+                  {option.label}
+                  {option.value !== 'all' && (
+                    <span className="ml-1.5 text-[10px] opacity-70">
+                      ({entityCounts[option.value] || 0})
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -112,7 +181,7 @@ export default function DataExplorer() {
         <div className="hidden lg:block w-72 border-r border-border bg-card overflow-y-auto">
           <div className="p-4">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Domains
+              {lang === 'sw' ? 'Vikoa' : 'Domains'}
             </h2>
             <DomainTree
               data={domainTree}
@@ -138,6 +207,7 @@ export default function DataExplorer() {
                   ? 'Tafuta viashiria, mada, maeneo...'
                   : 'Search indicators, topics, locations...'
                 }
+                suggestions={filterOptions.domains?.map(d => d.name) || []}
               />
             </div>
           </div>
@@ -163,12 +233,14 @@ export default function DataExplorer() {
 
           {/* Results Area */}
           <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-6">
-            <div className="max-w-7xl mx-auto">
+            <div className="max-w-7xl mx-auto space-y-6">
               {/* Loading State */}
               {isLoading && !results.length && (
                 <div className="flex flex-col items-center justify-center py-20">
                   <Loader2 className="h-8 w-8 text-primary animate-spin mb-4" />
-                  <p className="text-sm text-muted-foreground">Loading indicators...</p>
+                  <p className="text-sm text-muted-foreground">
+                    {lang === 'sw' ? 'Inapakia viashiria...' : 'Loading indicators...'}
+                  </p>
                 </div>
               )}
 
@@ -183,14 +255,14 @@ export default function DataExplorer() {
                     onClick={() => search()}
                     className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90"
                   >
-                    Retry
+                    {lang === 'sw' ? 'Jaribu Tena' : 'Retry'}
                   </button>
                 </div>
               )}
 
               {/* Results */}
               {!isLoading && !error && results.length > 0 && (
-                <div className="space-y-6">
+                <>
                   {viewMode === 'card' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {results.map((indicator) => (
@@ -210,12 +282,19 @@ export default function DataExplorer() {
                         <table className="w-full text-sm">
                           <thead className="bg-secondary/50 border-b border-border">
                             <tr>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Indicator</th>
+                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground">
+                                {lang === 'sw' ? 'Kiashiria' : 'Indicator'}
+                              </th>
+                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground">
+                                {lang === 'sw' ? 'Kiwango' : 'Level'}
+                              </th>
                               <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Year</th>
                               <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Value</th>
                               <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Unit</th>
                               <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Source</th>
-                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Geography</th>
+                              <th className="px-4 py-3 text-left font-semibold text-muted-foreground">
+                                {lang === 'sw' ? 'Eneo' : 'Geography'}
+                              </th>
                             </tr>
                           </thead>
                           <tbody>
@@ -226,6 +305,15 @@ export default function DataExplorer() {
                                 onClick={() => handleViewIndicator(indicator)}
                               >
                                 <td className="px-4 py-3 font-medium text-foreground">{indicator.name}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium
+                                    ${indicator.entity_level === 'National' ? 'bg-primary/10 text-primary' :
+                                      indicator.entity_level === 'County' ? 'bg-emerald-500/10 text-emerald-600' :
+                                      'bg-amber-500/10 text-amber-600'}`}
+                                  >
+                                    {indicator.entity_level || 'National'}
+                                  </span>
+                                </td>
                                 <td className="px-4 py-3 text-muted-foreground">{indicator.year || '-'}</td>
                                 <td className="px-4 py-3 text-foreground font-medium">
                                   {indicator.value?.toLocaleString() || '-'}
@@ -246,11 +334,13 @@ export default function DataExplorer() {
                   )}
 
                   {viewMode === 'chart' && (
-                    <div className="rounded-xl border border-border bg-card p-6">
-                      <p className="text-sm text-muted-foreground text-center py-12">
-                        Select an indicator to view its chart
-                      </p>
-                      {/* ChartView component will go here */}
+                    <div id="chart-section">
+                      <ChartView
+                        indicators={results}
+                        selectedIndicatorId={selectedIndicatorId}
+                        onSelectIndicator={setSelectedIndicatorId}
+                        onExport={handleDownload}
+                      />
                     </div>
                   )}
 
@@ -262,36 +352,40 @@ export default function DataExplorer() {
                         disabled={currentPage <= 1}
                         className="px-4 py-2 rounded-lg border border-border text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary"
                       >
-                        Previous
+                        {lang === 'sw' ? 'Iliyopita' : 'Previous'}
                       </button>
                       <span className="text-sm text-muted-foreground">
-                        Page {currentPage} of {totalPages}
+                        {lang === 'sw' ? 'Ukurasa' : 'Page'} {currentPage} {lang === 'sw' ? 'ya' : 'of'} {totalPages}
                       </span>
                       <button
                         onClick={() => goToPage(currentPage + 1)}
                         disabled={currentPage >= totalPages}
                         className="px-4 py-2 rounded-lg border border-border text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary"
                       >
-                        Next
+                        {lang === 'sw' ? 'Ijayo' : 'Next'}
                       </button>
                     </div>
                   )}
-                </div>
+                </>
               )}
 
               {/* Empty State */}
               {!isLoading && !error && results.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20">
                   <Database className="h-12 w-12 text-muted-foreground/40 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-foreground">No results found</h3>
+                  <h3 className="text-lg font-semibold text-foreground">
+                    {lang === 'sw' ? 'Hakuna matokeo' : 'No results found'}
+                  </h3>
                   <p className="text-sm text-muted-foreground max-w-md text-center mt-1">
-                    Try adjusting your filters or search terms
+                    {lang === 'sw'
+                      ? 'Jaribu kubadilisha vichujio au maneno ya utafutaji'
+                      : 'Try adjusting your filters or search terms'}
                   </p>
                   <button
                     onClick={clearFilters}
                     className="mt-4 px-4 py-2 bg-secondary text-foreground rounded-lg text-sm font-medium hover:bg-secondary/80"
                   >
-                    Clear all filters
+                    {lang === 'sw' ? 'Futa vichujio vyote' : 'Clear all filters'}
                   </button>
                 </div>
               )}
