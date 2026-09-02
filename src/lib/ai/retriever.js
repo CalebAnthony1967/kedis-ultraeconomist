@@ -1,74 +1,124 @@
 /**
- * Data Retriever – Fetch relevant data from Supabase
+ * Data Retriever – Enhanced with geography and intent support
  */
 
 import { supabase } from '@/lib/supabaseClient';
+import { COUNTY_MAP } from './classifier';
 
 /**
- * Retrieve relevant indicators based on query context
+ * Retrieve data based on classified query
  */
-export async function retrieveData(query, context = {}, limit = 15) {
-  const { entities, filters } = context;
-
+export async function retrieveData(query, context = {}, limit = 20) {
+  const { entities, geography, time_range, intent, search_terms } = context;
+  
   let supabaseQuery = supabase
     .from('indicators')
     .select('*')
     .limit(limit);
 
-  // Apply filters from context
-  if (filters?.countyCodes && filters.countyCodes.length > 0) {
-    supabaseQuery = supabaseQuery.in('county_code', filters.countyCodes);
+  // ============================================================
+  // 1. Apply geography filter
+  // ============================================================
+  if (geography?.type === 'county' && geography.code) {
+    supabaseQuery = supabaseQuery.eq('county_code', geography.code);
+  } else if (geography?.type === 'county' && geography.name) {
+    // Try by county_name as well
+    const countyName = geography.name.charAt(0).toUpperCase() + geography.name.slice(1);
+    supabaseQuery = supabaseQuery.or(`county_name.ilike.%${countyName}%,county_code.ilike.%${geography.code}%`);
   }
 
-  if (filters?.entityLevels && filters.entityLevels.length > 0) {
-    supabaseQuery = supabaseQuery.in('entity_level', filters.entityLevels);
+  // ============================================================
+  // 2. Apply time range filter
+  // ============================================================
+  if (time_range?.start) {
+    supabaseQuery = supabaseQuery.gte('year', time_range.start);
+  }
+  if (time_range?.end) {
+    supabaseQuery = supabaseQuery.lte('year', time_range.end);
   }
 
-  if (filters?.yearStart) {
-    supabaseQuery = supabaseQuery.gte('year', filters.yearStart);
+  // ============================================================
+  // 3. Apply pillar filter
+  // ============================================================
+  if (entities?.pillars && entities.pillars.length > 0) {
+    supabaseQuery = supabaseQuery.in('pillar', entities.pillars);
   }
 
-  if (filters?.yearEnd) {
-    supabaseQuery = supabaseQuery.lte('year', filters.yearEnd);
+  // ============================================================
+  // 4. Build search terms for full-text search
+  // ============================================================
+  let searchTerms = [];
+  
+  // For listing intent, search broadly
+  if (intent === 'listing') {
+    // Don't restrict too much
+    if (geography?.name) {
+      searchTerms.push(geography.name);
+    }
+  } else {
+    // Use extracted search terms
+    searchTerms = search_terms || query.split(/\s+/).filter(w => w.length > 2);
   }
 
-  if (filters?.domains && filters.domains.length > 0) {
-    supabaseQuery = supabaseQuery.in('domain', filters.domains);
+  // ============================================================
+  // 5. Apply search conditions
+  // ============================================================
+  if (searchTerms.length > 0) {
+    const conditions = searchTerms.map(term => 
+      `search_text.ilike.%${term}%`
+    ).join(',');
+    supabaseQuery = supabaseQuery.or(conditions);
   }
 
-  // Search by indicator name or description
-  if (query) {
-    supabaseQuery = supabaseQuery.or(
-      `search_text.ilike.%${query}%,name.ilike.%${query}%`
-    );
-  }
-
+  // ============================================================
+  // 6. Execute query
+  // ============================================================
   const { data, error } = await supabaseQuery;
+
   if (error) {
     console.error('Retrieval error:', error);
     return [];
   }
 
+  // ============================================================
+  // 7. Fallback: if no results, try broader search
+  // ============================================================
+  if (!data || data.length === 0) {
+    console.log('No results, trying broader search...');
+    
+    let fallbackQuery = supabase
+      .from('indicators')
+      .select('*')
+      .limit(limit);
+
+    if (geography?.code) {
+      fallbackQuery = fallbackQuery.eq('county_code', geography.code);
+    } else if (geography?.name) {
+      const countyName = geography.name.charAt(0).toUpperCase() + geography.name.slice(1);
+      fallbackQuery = fallbackQuery.or(`county_name.ilike.%${countyName}%`);
+    }
+
+    const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+    if (!fallbackError && fallbackData && fallbackData.length > 0) {
+      return fallbackData;
+    }
+  }
+
   return data || [];
 }
 
 /**
- * Get indicator time series for a specific indicator
+ * Get all available indicators for a county
  */
-export async function getIndicatorTimeSeries(indicatorId, countyCode = null) {
-  let query = supabase
+export async function getIndicatorsForCounty(countyCode) {
+  const { data, error } = await supabase
     .from('indicators')
-    .select('year, value, unit, source_mcda, county_name')
-    .eq('id', indicatorId)
-    .order('year', { ascending: true });
+    .select('id, name, unit, year, value, source_mcda, entity_level')
+    .eq('county_code', countyCode)
+    .limit(100);
 
-  if (countyCode) {
-    query = query.eq('county_code', countyCode);
-  }
-
-  const { data, error } = await query;
   if (error) {
-    console.error('Time series error:', error);
+    console.error('Error fetching county indicators:', error);
     return [];
   }
 
@@ -76,42 +126,40 @@ export async function getIndicatorTimeSeries(indicatorId, countyCode = null) {
 }
 
 /**
- * Get related indicators (semantic similarity)
+ * Get distinct indicators (unique by name) for a geography
  */
-export async function getRelatedIndicators(indicatorId, limit = 5) {
-  // Get the indicator first
-  const { data: indicator, error } = await supabase
+export async function getDistinctIndicators(geography) {
+  let query = supabase
     .from('indicators')
-    .select('name, sector, pillar')
-    .eq('id', indicatorId)
-    .single();
+    .select('id, name, unit, sector, pillar, source_mcda, entity_level')
+    .limit(200);
 
-  if (error || !indicator) return [];
+  if (geography?.type === 'county' && geography.code) {
+    query = query.eq('county_code', geography.code);
+  } else if (geography?.type === 'county' && geography.name) {
+    const countyName = geography.name.charAt(0).toUpperCase() + geography.name.slice(1);
+    query = query.ilike('county_name', `%${countyName}%`);
+  }
 
-  // Find related by sector or pillar
-  const { data, error: relatedError } = await supabase
-    .from('indicators')
-    .select('id, name, pillar, sector, unit')
-    .or(`sector.ilike.%${indicator.sector}%,pillar.ilike.%${indicator.pillar}%`)
-    .neq('id', indicatorId)
-    .limit(limit);
+  const { data, error } = await query;
+  if (error) {
+    console.error('Error fetching distinct indicators:', error);
+    return [];
+  }
 
-  if (relatedError) return [];
-  return data || [];
-}
+  // Deduplicate by name
+  const unique = {};
+  for (const item of data) {
+    if (!unique[item.name]) {
+      unique[item.name] = item;
+    }
+  }
 
-/**
- * Search by semantic embedding (if available)
- */
-export async function semanticSearch(query, limit = 10) {
-  // This would use pgvector if embeddings are stored
-  // For now, fallback to full-text search
-  return retrieveData(query, {}, limit);
+  return Object.values(unique);
 }
 
 export default {
   retrieveData,
-  getIndicatorTimeSeries,
-  getRelatedIndicators,
-  semanticSearch,
+  getIndicatorsForCounty,
+  getDistinctIndicators,
 };
